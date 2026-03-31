@@ -1,0 +1,275 @@
+# Data Schema
+
+## PlantUML - Database Relations
+
+```plantuml
+@startuml enron-data-schema
+!theme plain
+skinparam linetype ortho
+
+entity "message" as msg {
+    *mid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *message_id : TEXT <<UNIQUE, NOT NULL>>
+    in_reply_to : TEXT
+    *date : TEXT <<NOT NULL>>
+    *sender : TEXT <<NOT NULL>>
+    sender_name : TEXT
+    subject : TEXT
+    body_plain : TEXT
+    body_html : TEXT
+    *content_type : TEXT <<NOT NULL>>
+    charset : TEXT
+    x_origin : TEXT
+    x_folder : TEXT
+    *source_path : TEXT <<NOT NULL>>
+    *has_attachments : INTEGER <<NOT NULL, DEFAULT 0>>
+    *raw_headers : TEXT <<NOT NULL>>
+}
+
+entity "recipient" as rcp {
+    *rid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *mid : INTEGER <<FK, NOT NULL>>
+    *rtype : TEXT <<NOT NULL, CHECK(to|cc|bcc)>>
+    *address : TEXT <<NOT NULL>>
+    display_name : TEXT
+}
+
+entity "thread_reference" as thr {
+    *trid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *mid : INTEGER <<FK, NOT NULL>>
+    *referenced_message_id : TEXT <<NOT NULL>>
+    *position : INTEGER <<NOT NULL>>
+}
+
+entity "attachment" as att {
+    *aid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *mid : INTEGER <<FK, NOT NULL>>
+    filename : TEXT
+    *content_type : TEXT <<NOT NULL>>
+    content_disposition : TEXT
+    size_bytes : INTEGER
+    charset : TEXT
+}
+
+entity "employee" as emp {
+    *eid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    first_name : TEXT
+    last_name : TEXT
+    *email_primary : TEXT <<UNIQUE, NOT NULL>>
+    folder : TEXT
+    status : TEXT
+}
+
+entity "employee_email" as eem {
+    *eid : INTEGER <<FK, NOT NULL>>
+    *address : TEXT <<UNIQUE, NOT NULL>>
+    *is_primary : INTEGER <<NOT NULL, DEFAULT 0>>
+    --
+    <<PK (eid, address)>>
+}
+
+msg ||--o{ rcp : "mid"
+msg ||--o{ thr : "mid"
+msg ||--o{ att : "mid"
+emp ||--o{ eem : "eid"
+msg }o--o| eem : "sender → address"
+rcp }o--o| eem : "address → address"
+@enduml
+```
+
+## SQLite Database Schema
+
+```sql
+-- Core email message metadata
+CREATE TABLE message (
+    mid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id  TEXT NOT NULL UNIQUE,  -- MIME Message-ID header
+    in_reply_to TEXT,                  -- In-Reply-To header (references parent message_id)
+    date        TEXT NOT NULL,         -- ISO 8601 with timezone offset (e.g. 2001-10-29T14:30:00-06:00)
+    sender      TEXT NOT NULL,         -- From header email address
+    sender_name TEXT,                  -- From header display name
+    subject     TEXT,
+    body_plain  TEXT,                  -- Plain text body
+    body_html   TEXT,                  -- HTML body (if present)
+    content_type TEXT NOT NULL,        -- Top-level Content-Type (e.g. multipart/mixed)
+    charset     TEXT,                  -- Character encoding of the body
+    x_origin    TEXT,                  -- X-Origin header (mailbox provenance)
+    x_folder    TEXT,                  -- X-Folder header (original folder path)
+    source_path TEXT NOT NULL,         -- Filesystem path of the original MIME file
+    has_attachments INTEGER NOT NULL DEFAULT 0,  -- Denormalised flag for quick filtering
+    raw_headers TEXT NOT NULL          -- Complete original MIME headers preserved as-is for analysis
+);
+
+-- Recipients normalised per type, one row per recipient per message
+CREATE TABLE recipient (
+    rid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid         INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    rtype       TEXT NOT NULL CHECK (rtype IN ('to', 'cc', 'bcc')),
+    address     TEXT NOT NULL,
+    display_name TEXT
+);
+
+-- Threading references, one row per referenced message_id per message
+-- Preserves the full References header chain in order
+CREATE TABLE thread_reference (
+    trid        INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid         INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    referenced_message_id TEXT NOT NULL,  -- A single Message-ID from the References header
+    position    INTEGER NOT NULL          -- Order in the References chain (0 = oldest ancestor)
+);
+
+-- Attachment metadata (not the binary content)
+CREATE TABLE attachment (
+    aid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid         INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    filename    TEXT,
+    content_type TEXT NOT NULL,           -- MIME type (e.g. application/pdf)
+    content_disposition TEXT,             -- inline or attachment
+    size_bytes  INTEGER,                  -- Decoded content size
+    charset     TEXT                      -- Encoding if text-based attachment
+);
+
+-- Employee directory (imported from MySQL dump: planning/resources/*.sql.gz)
+-- This data must be imported from the MySQL dump as it would be complex to reconstruct from MIME files alone.
+-- The original dump contains manually curated employee-to-email mappings and job status data.
+CREATE TABLE employee (
+    eid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name  TEXT,
+    last_name   TEXT,
+    email_primary TEXT NOT NULL UNIQUE,
+    folder      TEXT,                     -- Original mailbox folder name
+    status      TEXT                      -- Last known job title/position
+);
+
+-- Bridge table mapping employees to all their known email addresses.
+-- Imported from the MySQL dump's employeelist table (Email_id, Email2, Email3, Email4 columns).
+-- Enables simple JOINs on a single address column rather than matching against multiple alt columns.
+CREATE TABLE employee_email (
+    eid         INTEGER NOT NULL REFERENCES employee(eid) ON DELETE CASCADE,
+    address     TEXT NOT NULL UNIQUE,     -- Email address (primary or alternate)
+    is_primary  INTEGER NOT NULL DEFAULT 0, -- 1 if this is the canonical address (Email_id), 0 for alternates
+    PRIMARY KEY (eid, address)
+);
+
+-- Indexes for common query patterns
+CREATE INDEX idx_message_sender      ON message(sender);
+CREATE INDEX idx_message_date        ON message(date);
+CREATE INDEX idx_message_message_id  ON message(message_id);
+CREATE INDEX idx_message_in_reply_to ON message(in_reply_to);
+CREATE INDEX idx_recipient_mid       ON recipient(mid);
+CREATE INDEX idx_recipient_address   ON recipient(address);
+CREATE INDEX idx_thread_ref_mid      ON thread_reference(mid);
+CREATE INDEX idx_thread_ref_ref_id   ON thread_reference(referenced_message_id);
+CREATE INDEX idx_attachment_mid      ON attachment(mid);
+CREATE INDEX idx_employee_email      ON employee(email_primary);
+CREATE INDEX idx_employee_email_addr ON employee_email(address);
+CREATE INDEX idx_employee_email_eid  ON employee_email(eid);
+```
+
+## Python Models
+
+```python
+"""Email data models for MIME parsing and SQLite storage."""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+
+
+@dataclass
+class Recipient:
+    """A single email recipient with type classification."""
+    rtype: str          # "to", "cc", or "bcc"
+    address: str
+    display_name: str | None = None
+
+
+@dataclass
+class ThreadReference:
+    """A single entry from the References header chain."""
+    referenced_message_id: str
+    position: int       # 0 = oldest ancestor in the chain
+
+
+@dataclass
+class Attachment:
+    """Metadata for a single MIME attachment (no binary content)."""
+    filename: str | None
+    content_type: str
+    content_disposition: str | None  # "inline" or "attachment"
+    size_bytes: int | None
+    charset: str | None = None
+
+
+@dataclass
+class EmployeeEmail:
+    """A single email address associated with an employee."""
+    address: str
+    is_primary: bool  # True if this is the canonical address (Email_id from the MySQL dump)
+
+
+@dataclass
+class Employee:
+    """Employee directory entry. Imported from MySQL dump (planning/resources/*.sql.gz)."""
+    first_name: str | None
+    last_name: str | None
+    email_primary: str
+    folder: str | None = None
+    status: str | None = None
+    email_addresses: list[EmployeeEmail] = field(default_factory=list)  # All known addresses (via employee_email bridge)
+
+
+@dataclass
+class EmailMessage:
+    """Complete parsed representation of a single MIME email."""
+    message_id: str
+    in_reply_to: str | None
+    date: datetime                   # Timezone-aware
+    sender: str
+    sender_name: str | None
+    subject: str | None
+    body_plain: str | None
+    body_html: str | None
+    content_type: str
+    charset: str | None
+    x_origin: str | None
+    x_folder: str | None
+    source_path: str
+    has_attachments: bool
+    raw_headers: str                 # Complete original MIME headers as-is
+    recipients: list[Recipient] = field(default_factory=list)
+    thread_references: list[ThreadReference] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
+```
+
+## Design Notes
+
+### `raw_headers` field
+Complete original MIME headers preserved as a single text blob. This ensures no header data is lost even if specific columns don't capture a particular header. Useful for ad-hoc analysis of non-standard headers (e.g. `X-Mailer`, `Received` chains for routing analysis, custom Enron-internal headers) without requiring schema changes.
+
+### Denormalised fields
+- `has_attachments` on `message` avoids a JOIN for the common "filter emails with attachments" query
+- `sender`/`sender_name` on `message` avoids a JOIN to `recipient` for the most common display case
+- `employee.email_primary` duplicates the `employee_email` row where `is_primary = 1` — this is intentional denormalisation for quick lookups without joining the bridge table, but **both must be kept in sync during import** (the parser should write to both `employee.email_primary` and insert the corresponding `employee_email` row with `is_primary = 1`)
+
+### Threading
+- `in_reply_to` on `message` gives direct parent lookup
+- `thread_reference` table preserves the full `References` header chain with ordering, enabling complete conversation thread reconstruction via SQL
+
+### Body storage
+- `body_plain` and `body_html` stored separately to avoid re-parsing multipart content
+- Lucene indexes plain text; UI can render HTML version
+
+### Employee ↔ Message relationship
+- Not enforced as a foreign key since many email addresses in the dataset won't match an employee record (external contacts)
+- Linked via `sender`/`recipient.address` → `employee_email.address` → `employee.eid` at query time
+- The `employee_email` bridge table flattens the original MySQL dump's `Email_id`/`Email2`/`Email3`/`Email4` columns into normalised rows, enabling simple single-column JOINs
+
+### Employee data import
+- The `employee` and `employee_email` tables must be imported from the MySQL dump (`planning/resources/*.sql.gz`) as part of the data import pipeline
+- The employee-to-email mappings were manually curated by the dataset maintainer and would be complex to reconstruct from the MIME files alone
+- The parser should extract `employeelist` rows from the MySQL dump and pivot the `Email_id`/`Email2`/`Email3`/`Email4` columns into `employee_email` rows
