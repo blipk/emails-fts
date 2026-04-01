@@ -1,0 +1,13 @@
+# Extracted data sources
+src/data_ingest/data/extracted/
+
+# Bundled data source archives
+src/data_ingest/data/*.gz
+
+# Generated database
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
