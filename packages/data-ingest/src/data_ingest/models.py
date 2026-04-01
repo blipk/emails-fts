@@ -53,6 +53,23 @@ class Employee:
 
 
 @dataclass
+class MessageReference:
+    """A resolved quoted reply/forward reference row in the message_reference table.
+
+    Note: Currently unused in the parser — QuotedReference is used during import and
+    inserted directly into SQL. This model exists for completeness with the database
+    schema. The Kotlin search server has its own equivalent data class.
+    """
+
+    mid: int
+    quoted_sender: str | None
+    quoted_date: str | None
+    quoted_subject: str | None
+    resolved_mid: int | None
+    position: int
+
+
+@dataclass
 class QuotedReference:
     """A single quoted reply/forward block parsed from an email body."""
 
