@@ -55,6 +55,17 @@ entity "attachment" as att {
     charset : TEXT
 }
 
+entity "message_reference" as mref {
+    *mrid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *mid : INTEGER <<FK, NOT NULL>>
+    quoted_sender : TEXT
+    quoted_date : TEXT
+    quoted_subject : TEXT
+    resolved_mid : INTEGER
+    *position : INTEGER <<NOT NULL>>
+}
+
 entity "employee" as emp {
     *eid : INTEGER <<PK, AUTOINCREMENT>>
     --
@@ -76,6 +87,8 @@ entity "employee_email" as eem {
 msg ||--o{ rcp : "mid"
 msg ||--o{ thr : "mid"
 msg ||--o{ att : "mid"
+msg ||--o{ mref : "mid"
+mref }o--o| msg : "resolved_mid → mid"
 emp ||--o{ eem : "eid"
 msg }o--o| eem : "sender → address"
 rcp }o--o| eem : "address → address"
@@ -156,19 +169,39 @@ CREATE TABLE employee_email (
     PRIMARY KEY (eid, address)
 );
 
+-- Quoted reply/forward references, parsed from body_plain during import.
+-- Reconstructs thread links by extracting inline-quoted headers from email bodies.
+-- Each row represents one quoted block (emails can contain multiple nested quotes).
+-- Note: This serves a similar purpose to the MySQL dump's `referenceinfo` table,
+-- which also stores quoted email content. However, we parse directly from body_plain
+-- rather than importing referenceinfo, giving us coverage for all emails rather than
+-- only the ~54k rows in that table.
+CREATE TABLE IF NOT EXISTS message_reference (
+    mrid            INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid             INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    quoted_sender   TEXT,           -- Parsed From/sender in the quoted block
+    quoted_date     TEXT,           -- Parsed Sent/Date in the quoted block (ISO 8601 when parseable)
+    quoted_subject  TEXT,           -- Parsed Subject in the quoted block
+    resolved_mid    INTEGER,        -- FK to message(mid) if the quoted email was matched
+    position        INTEGER NOT NULL -- Order of quote in the email (0 = most recent/innermost)
+);
+
 -- Indexes for common query patterns
-CREATE INDEX idx_message_sender      ON message(sender);
-CREATE INDEX idx_message_date        ON message(date);
-CREATE INDEX idx_message_message_id  ON message(message_id);
-CREATE INDEX idx_message_in_reply_to ON message(in_reply_to);
-CREATE INDEX idx_recipient_mid       ON recipient(mid);
-CREATE INDEX idx_recipient_address   ON recipient(address);
-CREATE INDEX idx_thread_ref_mid      ON thread_reference(mid);
-CREATE INDEX idx_thread_ref_ref_id   ON thread_reference(referenced_message_id);
-CREATE INDEX idx_attachment_mid      ON attachment(mid);
-CREATE INDEX idx_employee_email      ON employee(email_primary);
-CREATE INDEX idx_employee_email_addr ON employee_email(address);
-CREATE INDEX idx_employee_email_eid  ON employee_email(eid);
+CREATE INDEX IF NOT EXISTS idx_message_sender      ON message(sender);
+CREATE INDEX IF NOT EXISTS idx_message_date        ON message(date);
+CREATE INDEX IF NOT EXISTS idx_message_message_id  ON message(message_id);
+CREATE INDEX IF NOT EXISTS idx_message_in_reply_to ON message(in_reply_to);
+CREATE INDEX IF NOT EXISTS idx_recipient_mid       ON recipient(mid);
+CREATE INDEX IF NOT EXISTS idx_recipient_address   ON recipient(address);
+CREATE INDEX IF NOT EXISTS idx_thread_ref_mid      ON thread_reference(mid);
+CREATE INDEX IF NOT EXISTS idx_thread_ref_ref_id   ON thread_reference(referenced_message_id);
+CREATE INDEX IF NOT EXISTS idx_attachment_mid      ON attachment(mid);
+CREATE INDEX IF NOT EXISTS idx_employee_email      ON employee(email_primary);
+CREATE INDEX IF NOT EXISTS idx_employee_email_addr ON employee_email(address);
+CREATE INDEX IF NOT EXISTS idx_employee_email_eid  ON employee_email(eid);
+CREATE INDEX IF NOT EXISTS idx_msg_ref_mid         ON message_reference(mid);
+CREATE INDEX IF NOT EXISTS idx_msg_ref_resolved    ON message_reference(resolved_mid);
+CREATE INDEX IF NOT EXISTS idx_msg_ref_sender      ON message_reference(quoted_sender);
 ```
 
 ## Python Models
@@ -224,6 +257,15 @@ class Employee:
 
 
 @dataclass
+class QuotedReference:
+    """A single quoted reply/forward block parsed from an email body."""
+    quoted_sender: str | None
+    quoted_date: str | None         # ISO 8601 when parseable, raw string otherwise
+    quoted_subject: str | None
+    position: int                   # 0 = most recent/innermost quote
+
+
+@dataclass
 class EmailMessage:
     """Complete parsed representation of a single MIME email."""
     message_id: str
@@ -244,6 +286,7 @@ class EmailMessage:
     recipients: list[Recipient] = field(default_factory=list)
     thread_references: list[ThreadReference] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    quoted_references: list[QuotedReference] = field(default_factory=list)
 ```
 
 ## Design Notes
@@ -257,8 +300,12 @@ Complete original MIME headers preserved as a single text blob. This ensures no 
 - `employee.email_primary` duplicates the `employee_email` row where `is_primary = 1` — this is intentional denormalisation for quick lookups without joining the bridge table, but **both must be kept in sync during import** (the parser should write to both `employee.email_primary` and insert the corresponding `employee_email` row with `is_primary = 1`)
 
 ### Threading
-- `in_reply_to` on `message` gives direct parent lookup
-- `thread_reference` table preserves the full `References` header chain with ordering, enabling complete conversation thread reconstruction via SQL
+Three-tier thread reconstruction approach:
+- **Primary**: `in_reply_to` on `message` gives direct parent lookup (from MIME In-Reply-To header)
+- **Secondary**: `thread_reference` table preserves the full `References` header chain with ordering (from MIME References header — mostly absent in the Enron dataset)
+- **Tertiary**: `message_reference` table stores quoted reply/forward metadata parsed from `body_plain` during import. The parser detects `-----Original Message-----` and `-----Forwarded by...-----` separators, extracts embedded From/Sent/Subject headers, and after all emails are imported, attempts to resolve each quoted block to an actual `message.mid` by matching sender+date+subject. This provides significantly broader thread coverage than MIME headers alone (~54k+ emails have quoted content)
+
+Note: The MySQL dump contains a `referenceinfo` table with similar quoted email content (~54,778 rows). We parse directly from `body_plain` instead of importing `referenceinfo` because: (a) it gives coverage for all emails, not just those in the dump, and (b) the MIME source is the authoritative data source for this project
 
 ### Body storage
 - `body_plain` and `body_html` stored separately to avoid re-parsing multipart content

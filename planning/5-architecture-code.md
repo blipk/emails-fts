@@ -19,18 +19,26 @@ from pathlib import Path
 class EmailDatasetParser:
     """Initializes database with schema, parses MIME emails and MySQL employee data into SQLite."""
 
-    def __init__(self, db_path: str, schema_path: str) -> None: ...
+    def __init__(self, db_path: str) -> None: ...
 
     def init_database(self) -> None:
-        """Create all tables and indexes from the SQL schema file."""
+        """Create all tables and indexes from the bundled SQL schema file."""
 
-    def import_mime_emails(self, mime_directory: str) -> ImportResult:
+    def import_mime_emails(self, mime_directory: str, continue_mode: bool = False) -> ImportResult:
         """Walk the MIME directory tree, parse each email file, and insert into SQLite.
-        Uses Python's email.parser.BytesParser with default policy for full MIME support."""
+        Uses Python's email.parser.BytesParser with default policy for full MIME support.
+        Parses quoted reply/forward blocks from body_plain for thread reconstruction.
+        In continue mode, skips files whose source_path is already in the database."""
 
     def import_employee_data(self, mysql_dump_path: str) -> ImportResult:
-        """Parse the MySQL dump's employeelist table and insert into employee + employee_email tables.
+        """Parse the MySQL dump's employeelist table via sqlglot MySQL→SQLite transpilation.
         Pivots Email_id/Email2/Email3/Email4 columns into employee_email bridge rows with is_primary flag."""
+
+    def resolve_thread_references(self) -> int:
+        """Post-import pass: attempt to resolve message_reference rows to actual message mids.
+        Matches quoted_sender+quoted_date+quoted_subject against the message table.
+        Also backfills message.in_reply_to where it is NULL but a resolved parent exists.
+        Returns count of resolved references."""
 
     def validate(self) -> ValidationResult:
         """Validate imported data integrity: check referential consistency, flag missing fields."""
@@ -41,6 +49,7 @@ class ImportResult:
     """Result of an import operation."""
     total_processed: int
     success_count: int
+    skip_count: int
     error_count: int
     errors: list[str]
 
@@ -104,6 +113,15 @@ class Employee:
 
 
 @dataclass
+class QuotedReference:
+    """A single quoted reply/forward block parsed from an email body."""
+    quoted_sender: str | None
+    quoted_date: str | None         # ISO 8601 when parseable, raw string otherwise
+    quoted_subject: str | None
+    position: int                   # 0 = most recent/innermost quote
+
+
+@dataclass
 class EmailMessage:
     """Complete parsed representation of a single MIME email."""
     message_id: str
@@ -124,6 +142,7 @@ class EmailMessage:
     recipients: list[Recipient] = field(default_factory=list)
     thread_references: list[ThreadReference] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    quoted_references: list[QuotedReference] = field(default_factory=list)
 ```
 
 
