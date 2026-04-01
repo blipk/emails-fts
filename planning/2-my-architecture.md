@@ -18,7 +18,7 @@ So after analyzing a few different approaches Kotlin+SQLite+Lucene seemed to pro
 
 This aligns well with stakeholder interest and technical/other resource constraints, for a legal use case the relational + semantic search provides the best case analysis context, especially when presented along with a configurable UI with a data view that can easily be cross referenced, cited and exported.
 
-## Reasoning Re-evaluations
+### Reasoning Re-evaluations
 
 On further analysis of the mysql email data set it is missing some metadata which would be useful in a legal analysis context:
 
@@ -39,6 +39,26 @@ Further consideration has also been made on the UI/UX:
 This is what I know well but I may instead explore UI development in Kotlin if time permits.
 
 
+### Testing Strategy
+
+Due to time constraints testing implementations will be limited. I would usually write them after the system comes together anyway, but here's some quick thoughts on some needed tests.
+
+Email Dataset Parser (Python):
+- use python unittest
+- validation tests (match import counts to source counts, validate source data integrity, validate column data integrity, validate table relationships)
+
+Search Server:
+- unit tests on all components (classes) and their methods (input parser operators & fuzzy matching, tests on exporter consistency)
+- integration tests on pagination, related and thread construction
+- regression tests on input parser
+- integrity checks on datastores and indexes (sqlite + lucene)
+
+Frontend Client:
+- UI unit tests for react component rendering and funcionality
+- integration tests with network client and API server
+
+Some end-to-end tests across the stack would be useful as well.
+
 
 # Step 2 - C4 Model
 
@@ -48,7 +68,7 @@ This is what I know well but I may instead explore UI development in Kotlin if t
 
 People/Stakeholders: Legal Analyst, System Admin
 
-External Systems: Email data set
+External Systems: Email dataset
 
 ## Containers
 
@@ -113,31 +133,11 @@ External Systems: Email data set
 
 
 
+
+```md
 ## Code
 
 ### <container_name>
 #### <component_name>
 <code>
-
-
-
-
-
-
-
-# Steps
-
-1. C4 Modelling
-
-2. Build Containers + Code
-
-3. Compute Indexes, Do Searches
-
-4. Documentation + Package
-
-
-
-
-
-
-# Post - Commentary
+```

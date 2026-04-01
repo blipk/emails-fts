@@ -1,5 +1,9 @@
 ## Code
 
+---
+
+## Parser Package (Python)
+
 ### Email Dataset Parser
 
 #### Parsing class
@@ -122,6 +126,10 @@ class EmailMessage:
     attachments: list[Attachment] = field(default_factory=list)
 ```
 
+
+---
+
+## Backend Package (Kotlin / JVM)
 
 ### SQLite Database (datastore)
 
@@ -505,6 +513,10 @@ data class HealthDto(
 )
 ```
 
+
+---
+
+## Frontend Package (TypeScript / Vite)
 
 ### UI
 
