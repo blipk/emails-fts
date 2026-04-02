@@ -13,7 +13,7 @@ workspace "Enron Email FTS" "C4 diagrams for the Enron Email Full Text Search Sy
         emailDataSet = softwareSystem "Email Data Set" "Raw Enron email data: MIME files and MySQL dump (for employee directory)." "External"
 
         # Software System
-        enronFts = softwareSystem "Enron Email FTS" "Provides full-text search with semantic and relational queries over the Enron email dataset." {
+        emailsFts = softwareSystem "Enron Email FTS" "Provides full-text search with semantic and relational queries over the Enron email dataset." {
 
             # Containers
 
@@ -72,9 +72,9 @@ workspace "Enron Email FTS" "C4 diagrams for the Enron Email Full Text Search Sy
         }
 
         # System Context relationships
-        legalAnalyst -> enronFts "Searches emails and exports results"
-        systemAdmin -> enronFts "Imports data, rebuilds indexes, configures system"
-        enronFts -> emailDataSet "Reads and imports raw email data from"
+        legalAnalyst -> emailsFts "Searches emails and exports results"
+        systemAdmin -> emailsFts "Imports data, rebuilds indexes, configures system"
+        emailsFts -> emailDataSet "Reads and imports raw email data from"
 
         # Container relationships
         legalAnalyst -> ui "Uses" "HTTPS"
@@ -138,12 +138,12 @@ workspace "Enron Email FTS" "C4 diagrams for the Enron Email Full Text Search Sy
     }
 
     views {
-        systemContext enronFts "SystemContext" {
+        systemContext emailsFts "SystemContext" {
             include *
             autoLayout
         }
 
-        container enronFts "Containers" {
+        container emailsFts "Containers" {
             include *
             autoLayout
         }
