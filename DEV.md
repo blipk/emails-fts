@@ -1,7 +1,7 @@
 
 # Development Process
 
-1. Research & System Modelling
+## 1. Research & System Modelling
 
 - started using my knowledge to analyze the task and begin to determine the required technologies and fundamental algorithms that will satisfy the stakeholder interests and system constraints
 - further web research and AI discussion to expand on my knowledge
@@ -14,13 +14,14 @@
 - in the interest of learning and to demonstrate skills outside system modelling, the core Kotlin Search Server and all containers and components will be coded without LLM agents
 
 
-2. Build Containers & Code
+## 2. Build Containers & Code
 
+### Kotlin Search Server Package
 - read kotlin and gradle getting started guides and standard library overviews
 - set up kotlin development environment and initialize Kotlin package
 - review planning documents and finalise class and data model interfaces before implementation
 
-
+### Python Email Data Set Parser
 - curate planning context prompt with system model and prompt LLM agent and directive to create the python data processor.
     LLM issues:
     - as I didn't fully develop the code level specifications with full technical container requirements specification templates the agent tried to parse+convert the mysql syntax to sqlite using line splitting and regex, quick research and directed it to use the `sqlglot` python library
@@ -28,11 +29,13 @@
     - prompted to improve UX: tmp file management/location, CLI output clarity, clean/continue operating modes
     - could potentially use perf improvements but it's acceptable as is
 - after reviewing the initial code and the generated database it mostly looks the same as the mysql dump as there were no relevant headers in the MIME email files (or most were plaintext) that could be used to extract attachments or thread info from
-- inspected source data again and decided to reconstruct threads/attachments from quoted reply/forward blocks in email body text, same data as in the mysql dump `Referenceinfo` table, prompted LLM with instructions for parsing the blocks and then resolving threads from them, worked well and resolved threading reference but needed to be directed to improve performance (SQL -> in-memory)
+- inspected source data again and decided to reconstruct threads/attachments from quoted reply/forward blocks in email body text, same data as in the mysql dump `Referenceinfo` table, prompted LLM with instructions for parsing the blocks and then resolving threads from them, worked well and resolved threading reference but needed to be directed to improve performance and ensure schema integrity
+- further analysis of the source emails reveals custom headers such as `X-FileName` that could be useful in reconstructing attachments, worked with LLM to investigate any other information that may be useful in a legal analysis context
+- discovered plenty of useful metadata, mostly in the headers of original emails as well as quoted emails - mostly noted them down at this stage but decided to add headers and email references to relational schema for extra search, and implement extracting attachment information from identified lotus notes tags in email bodies seeing as there's none in the original email headers
 
 
 3. Testing & Debugging
-- Compute Indexes, Do Searches,
+- Build Indexes, Do Searches
 
 
 
