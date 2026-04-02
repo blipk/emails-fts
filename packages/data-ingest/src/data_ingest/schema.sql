@@ -3,7 +3,8 @@
 CREATE TABLE IF NOT EXISTS message (
     mid         INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id  TEXT NOT NULL UNIQUE,  -- MIME Message-ID header
-    in_reply_to TEXT,                  -- In-Reply-To header (references parent message_id)
+    in_reply_to TEXT,                  -- MIME In-Reply-To header
+    in_reply_to_resolved INTEGER,      -- Backfilled FK to message(mid) from resolved quoted references
     date        TEXT NOT NULL,         -- ISO 8601 with timezone offset (e.g. 2001-10-29T14:30:00-06:00)
     sender      TEXT NOT NULL,         -- From header email address
     sender_name TEXT,                  -- From header display name
@@ -45,7 +46,8 @@ CREATE TABLE IF NOT EXISTS attachment (
     content_type TEXT NOT NULL,           -- MIME type (e.g. application/pdf)
     content_disposition TEXT,             -- inline or attachment
     size_bytes  INTEGER,                  -- Decoded content size
-    charset     TEXT                      -- Encoding if text-based attachment
+    charset     TEXT,                     -- Encoding if text-based attachment
+    source      TEXT NOT NULL DEFAULT 'mime' -- 'mime' = from MIME part, 'body_reference' = inferred from <<filename>> in body text
 );
 
 -- Employee directory (imported from MySQL dump)
@@ -66,6 +68,16 @@ CREATE TABLE IF NOT EXISTS employee_email (
     PRIMARY KEY (eid, address)
 );
 
+-- Normalized email headers, one row per header per message.
+-- Stores all MIME headers for structured querying and display.
+CREATE TABLE IF NOT EXISTS email_header (
+    hid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid         INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    name        TEXT NOT NULL,           -- Header name as-is from MIME (e.g. "X-From", "Content-Type")
+    value       TEXT NOT NULL,           -- Decoded header value
+    position    INTEGER NOT NULL         -- Order of appearance in the original headers (0-based)
+);
+
 -- Quoted reply/forward references, parsed from body_plain during import.
 -- Reconstructs thread links by extracting inline-quoted headers from email bodies.
 -- Each row represents one quoted block (emails can contain multiple nested quotes).
@@ -84,11 +96,15 @@ CREATE INDEX IF NOT EXISTS idx_message_sender      ON message(sender);
 CREATE INDEX IF NOT EXISTS idx_message_date        ON message(date);
 CREATE INDEX IF NOT EXISTS idx_message_message_id  ON message(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_in_reply_to ON message(in_reply_to);
+CREATE INDEX IF NOT EXISTS idx_message_reply_resolved ON message(in_reply_to_resolved);
 CREATE INDEX IF NOT EXISTS idx_recipient_mid       ON recipient(mid);
 CREATE INDEX IF NOT EXISTS idx_recipient_address   ON recipient(address);
 CREATE INDEX IF NOT EXISTS idx_thread_ref_mid      ON thread_reference(mid);
 CREATE INDEX IF NOT EXISTS idx_thread_ref_ref_id   ON thread_reference(referenced_message_id);
 CREATE INDEX IF NOT EXISTS idx_attachment_mid      ON attachment(mid);
+CREATE INDEX IF NOT EXISTS idx_header_mid          ON email_header(mid);
+CREATE INDEX IF NOT EXISTS idx_header_name         ON email_header(name);
+CREATE INDEX IF NOT EXISTS idx_header_name_value   ON email_header(name, value);
 CREATE INDEX IF NOT EXISTS idx_employee_email      ON employee(email_primary);
 CREATE INDEX IF NOT EXISTS idx_employee_email_addr ON employee_email(address);
 CREATE INDEX IF NOT EXISTS idx_employee_email_eid  ON employee_email(eid);

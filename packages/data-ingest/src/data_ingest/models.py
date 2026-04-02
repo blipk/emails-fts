@@ -30,6 +30,16 @@ class Attachment:
     content_disposition: str | None  # "inline" or "attachment"
     size_bytes: int | None
     charset: str | None = None
+    source: str = "mime"  # "mime" = from MIME part, "body_reference" = from <<filename>> in body text
+
+
+@dataclass
+class EmailHeader:
+    """A single email header name/value pair."""
+
+    name: str
+    value: str
+    position: int  # Order in original headers (0-based)
 
 
 @dataclass
@@ -102,6 +112,7 @@ class EmailMessage:
     thread_references: list[ThreadReference] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
     quoted_references: list[QuotedReference] = field(default_factory=list)
+    headers: list[EmailHeader] = field(default_factory=list)
 
 
 @dataclass

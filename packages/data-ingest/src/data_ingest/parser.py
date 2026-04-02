@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from data_ingest.models import (
     Attachment,
+    EmailHeader,
     EmailMessage,
     Employee,
     EmployeeEmail,
@@ -47,6 +48,48 @@ _NOTES_FROM_RE = re.compile(
     r"^From:\s+(.+?)\s+on\s+(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+# Lotus Notes <<filename.ext>> notation for stripped attachments in body text
+_ATTACHMENT_REF_RE = re.compile(r"<<([^>]+\.[a-zA-Z]{2,5})>>")
+
+_EXT_TO_MIME: dict[str, str] = {
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".htm": "text/html",
+    ".html": "text/html",
+    ".csv": "text/csv",
+    ".zip": "application/zip",
+    ".gif": "image/gif",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".rtf": "application/rtf",
+    ".wpd": "application/wordperfect",
+    ".eml": "message/rfc822",
+    ".nsf": "application/vnd.lotus-notes",
+    ".pst": "application/vnd.ms-outlook",
+}
+
+
+def _guess_content_type(filename: str) -> str:
+    """Guess MIME type from a filename's extension.
+
+    Args:
+        filename: Filename with extension.
+
+    Returns:
+        MIME type string, defaulting to application/octet-stream.
+    """
+    ext = Path(filename).suffix.lower()
+    return _EXT_TO_MIME.get(ext, "application/octet-stream")
 
 
 def _extract_message_ids(header_value: str) -> list[str]:
@@ -229,6 +272,8 @@ class EmailDatasetParser:
         plaintext_count = 0
         multipart_count = 0
         quoted_ref_count = 0
+        header_count = 0
+        body_attachment_count = 0
         errors: list[str] = []
         batch_size = 1000
 
@@ -258,6 +303,8 @@ class EmailDatasetParser:
                     plaintext_count += 1
 
                 quoted_ref_count += len(parsed.quoted_references)
+                header_count += len(parsed.headers)
+                body_attachment_count += sum(1 for a in parsed.attachments if a.source == "body_reference")
             except Exception as exc:
                 error_msg = f"{email_path}: {exc}"
                 errors.append(error_msg)
@@ -267,16 +314,16 @@ class EmailDatasetParser:
                 self.conn.commit()
                 logger.info(
                     "Processed %d emails (%d succeeded, %d skipped, %d errors)"
-                    " [%d plaintext, %d multipart, %d quoted refs]",
+                    " [%d single-part, %d multipart, %d quoted refs, %d body attachments]",
                     total, success, skipped, len(errors),
-                    plaintext_count, multipart_count, quoted_ref_count,
+                    plaintext_count, multipart_count, quoted_ref_count, body_attachment_count,
                 )
 
         self.conn.commit()
 
         logger.info(
-            "Email types: %d plaintext, %d multipart | Quoted references extracted: %d",
-            plaintext_count, multipart_count, quoted_ref_count,
+            "Email types: %d single-part, %d multipart | Quoted references: %d | Headers: %d | Body attachments: %d",
+            plaintext_count, multipart_count, quoted_ref_count, header_count, body_attachment_count,
         )
 
         result = ImportResult(
@@ -427,17 +474,18 @@ class EmailDatasetParser:
             unresolved_remaining,
         )
 
-        # Backfill in_reply_to where NULL using the most recent resolved reference (position 0)
+        # Backfill in_reply_to_resolved using the most recent resolved reference (position 0)
+        # This is a separate column from in_reply_to (which preserves the original MIME header)
         cursor.execute("""
-            UPDATE message SET in_reply_to = (
-                SELECT CAST(mr.resolved_mid AS TEXT)
+            UPDATE message SET in_reply_to_resolved = (
+                SELECT mr.resolved_mid
                 FROM message_reference mr
                 WHERE mr.mid = message.mid
                   AND mr.resolved_mid IS NOT NULL
                   AND mr.position = 0
                 LIMIT 1
             )
-            WHERE in_reply_to IS NULL
+            WHERE in_reply_to_resolved IS NULL
               AND EXISTS (
                 SELECT 1 FROM message_reference mr
                 WHERE mr.mid = message.mid
@@ -449,7 +497,7 @@ class EmailDatasetParser:
         self.conn.commit()
 
         logger.info(
-            "Thread resolution complete: %d in_reply_to backfilled from resolved references",
+            "Thread resolution complete: %d in_reply_to_resolved backfilled from resolved references",
             backfilled,
         )
         return resolved_count
@@ -682,6 +730,7 @@ class EmailDatasetParser:
                             content_disposition=part_disposition if part_disposition else None,
                             size_bytes=att_size,
                             charset=part.get_content_charset(),
+                            source="mime",
                         )
                     )
         else:
@@ -706,8 +755,32 @@ class EmailDatasetParser:
 
         source_path = str(file_path.relative_to(root_dir))
 
+        # Extract attachment references from body text (Lotus Notes <<filename>> notation)
+        if body_plain:
+            existing_filenames = {a.filename for a in attachments if a.filename}
+            for match in _ATTACHMENT_REF_RE.finditer(body_plain):
+                ref_filename = match.group(1).strip()
+                if ref_filename and ref_filename not in existing_filenames:
+                    attachments.append(
+                        Attachment(
+                            filename=ref_filename,
+                            content_type=_guess_content_type(ref_filename),
+                            content_disposition=None,
+                            size_bytes=None,
+                            charset=None,
+                            source="body_reference",
+                        )
+                    )
+                    existing_filenames.add(ref_filename)
+
         # Parse quoted reply/forward blocks for thread reconstruction
         quoted_references = _parse_quoted_references(body_plain or "")
+
+        # Extract all MIME headers as structured name/value pairs
+        headers: list[EmailHeader] = []
+        for position, (name, value) in enumerate(msg.items()):
+            str_value = str(value) if value else ""
+            headers.append(EmailHeader(name=name, value=str_value, position=position))
 
         return EmailMessage(
             message_id=message_id,
@@ -729,6 +802,7 @@ class EmailDatasetParser:
             thread_references=thread_references,
             attachments=attachments,
             quoted_references=quoted_references,
+            headers=headers,
         )
 
     def _parse_date(self, raw_date: str) -> datetime:
@@ -803,9 +877,9 @@ class EmailDatasetParser:
 
         for att in email.attachments:
             cursor.execute(
-                """INSERT INTO attachment (mid, filename, content_type, content_disposition, size_bytes, charset)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (mid, att.filename, att.content_type, att.content_disposition, att.size_bytes, att.charset),
+                """INSERT INTO attachment (mid, filename, content_type, content_disposition, size_bytes, charset, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (mid, att.filename, att.content_type, att.content_disposition, att.size_bytes, att.charset, att.source),
             )
 
         for qref in email.quoted_references:
@@ -813,6 +887,12 @@ class EmailDatasetParser:
                 """INSERT INTO message_reference (mid, quoted_sender, quoted_date, quoted_subject, position)
                    VALUES (?, ?, ?, ?, ?)""",
                 (mid, qref.quoted_sender, qref.quoted_date, qref.quoted_subject, qref.position),
+            )
+
+        for hdr in email.headers:
+            cursor.execute(
+                "INSERT INTO email_header (mid, name, value, position) VALUES (?, ?, ?, ?)",
+                (mid, hdr.name, hdr.value, hdr.position),
             )
 
     def _parse_mysql_employee_dump(self, dump_path: Path) -> list[Employee]:
