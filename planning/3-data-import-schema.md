@@ -12,6 +12,7 @@ entity "message" as msg {
     --
     *message_id : TEXT <<UNIQUE, NOT NULL>>
     in_reply_to : TEXT
+    in_reply_to_resolved : INTEGER <<FK>>
     *date : TEXT <<NOT NULL>>
     *sender : TEXT <<NOT NULL>>
     sender_name : TEXT
@@ -53,6 +54,16 @@ entity "attachment" as att {
     content_disposition : TEXT
     size_bytes : INTEGER
     charset : TEXT
+    *source : TEXT <<NOT NULL, DEFAULT 'mime'>>
+}
+
+entity "email_header" as hdr {
+    *hid : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    *mid : INTEGER <<FK, NOT NULL>>
+    *name : TEXT <<NOT NULL>>
+    *value : TEXT <<NOT NULL>>
+    *position : INTEGER <<NOT NULL>>
 }
 
 entity "message_reference" as mref {
@@ -87,6 +98,7 @@ entity "employee_email" as eem {
 msg ||--o{ rcp : "mid"
 msg ||--o{ thr : "mid"
 msg ||--o{ att : "mid"
+msg ||--o{ hdr : "mid"
 msg ||--o{ mref : "mid"
 mref }o--o| msg : "resolved_mid → mid"
 emp ||--o{ eem : "eid"
@@ -102,7 +114,8 @@ rcp }o--o| eem : "address → address"
 CREATE TABLE message (
     mid         INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id  TEXT NOT NULL UNIQUE,  -- MIME Message-ID header
-    in_reply_to TEXT,                  -- In-Reply-To header (references parent message_id)
+    in_reply_to TEXT,                  -- MIME In-Reply-To header
+    in_reply_to_resolved INTEGER,      -- Backfilled FK to message(mid) from resolved quoted references (NULL if unresolvable)
     date        TEXT NOT NULL,         -- ISO 8601 with timezone offset (e.g. 2001-10-29T14:30:00-06:00)
     sender      TEXT NOT NULL,         -- From header email address
     sender_name TEXT,                  -- From header display name
@@ -144,7 +157,8 @@ CREATE TABLE attachment (
     content_type TEXT NOT NULL,           -- MIME type (e.g. application/pdf)
     content_disposition TEXT,             -- inline or attachment
     size_bytes  INTEGER,                  -- Decoded content size
-    charset     TEXT                      -- Encoding if text-based attachment
+    charset     TEXT,                     -- Encoding if text-based attachment
+    source      TEXT NOT NULL DEFAULT 'mime' -- 'mime' = from MIME part, 'body_reference' = inferred from <<filename>> in body text
 );
 
 -- Employee directory (imported from MySQL dump: planning/resources/*.sql.gz)
@@ -169,6 +183,22 @@ CREATE TABLE employee_email (
     PRIMARY KEY (eid, address)
 );
 
+-- Normalized email headers, one row per header per message.
+-- Stores all MIME headers for structured querying and display.
+-- Headers with legal analysis value include:
+--   X-From/X-To/X-cc/X-bcc: Lotus Notes internal directory paths revealing org unit and CN
+--   X-FileName: PST/NSF archive name establishing chain of custody
+--   Content-Transfer-Encoding: relevant if encoding corruption is alleged
+-- Note: forensic headers (X-Originating-IP, X-Authentication-Warning, Received chains)
+-- appear only inside body text of forwarded messages in this dataset, not as top-level MIME headers.
+CREATE TABLE IF NOT EXISTS email_header (
+    hid         INTEGER PRIMARY KEY AUTOINCREMENT,
+    mid         INTEGER NOT NULL REFERENCES message(mid) ON DELETE CASCADE,
+    name        TEXT NOT NULL,           -- Header name as-is from MIME (e.g. "X-From", "Content-Type")
+    value       TEXT NOT NULL,           -- Decoded header value
+    position    INTEGER NOT NULL         -- Order of appearance in the original headers (0-based)
+);
+
 -- Quoted reply/forward references, parsed from body_plain during import.
 -- Reconstructs thread links by extracting inline-quoted headers from email bodies.
 -- Each row represents one quoted block (emails can contain multiple nested quotes).
@@ -191,6 +221,7 @@ CREATE INDEX IF NOT EXISTS idx_message_sender      ON message(sender);
 CREATE INDEX IF NOT EXISTS idx_message_date        ON message(date);
 CREATE INDEX IF NOT EXISTS idx_message_message_id  ON message(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_in_reply_to ON message(in_reply_to);
+CREATE INDEX IF NOT EXISTS idx_message_reply_resolved ON message(in_reply_to_resolved);
 CREATE INDEX IF NOT EXISTS idx_recipient_mid       ON recipient(mid);
 CREATE INDEX IF NOT EXISTS idx_recipient_address   ON recipient(address);
 CREATE INDEX IF NOT EXISTS idx_thread_ref_mid      ON thread_reference(mid);
@@ -199,6 +230,9 @@ CREATE INDEX IF NOT EXISTS idx_attachment_mid      ON attachment(mid);
 CREATE INDEX IF NOT EXISTS idx_employee_email      ON employee(email_primary);
 CREATE INDEX IF NOT EXISTS idx_employee_email_addr ON employee_email(address);
 CREATE INDEX IF NOT EXISTS idx_employee_email_eid  ON employee_email(eid);
+CREATE INDEX IF NOT EXISTS idx_header_mid           ON email_header(mid);
+CREATE INDEX IF NOT EXISTS idx_header_name          ON email_header(name);
+CREATE INDEX IF NOT EXISTS idx_header_name_value    ON email_header(name, value);
 CREATE INDEX IF NOT EXISTS idx_msg_ref_mid         ON message_reference(mid);
 CREATE INDEX IF NOT EXISTS idx_msg_ref_resolved    ON message_reference(resolved_mid);
 CREATE INDEX IF NOT EXISTS idx_msg_ref_sender      ON message_reference(quoted_sender);
@@ -236,6 +270,15 @@ class Attachment:
     content_disposition: str | None  # "inline" or "attachment"
     size_bytes: int | None
     charset: str | None = None
+    source: str = "mime"             # "mime" = from MIME part, "body_reference" = from <<filename>> in body text
+
+
+@dataclass
+class EmailHeader:
+    """A single email header name/value pair."""
+    name: str
+    value: str
+    position: int                    # Order in original headers (0-based)
 
 
 @dataclass
@@ -254,6 +297,19 @@ class Employee:
     folder: str | None = None
     status: str | None = None
     email_addresses: list[EmployeeEmail] = field(default_factory=list)  # All known addresses (via employee_email bridge)
+
+
+@dataclass
+class MessageReference:
+    """A resolved quoted reply/forward reference row in the message_reference table.
+    Note: Currently unused in the parser — QuotedReference is used during import.
+    Exists for completeness with the database schema."""
+    mid: int
+    quoted_sender: str | None
+    quoted_date: str | None
+    quoted_subject: str | None
+    resolved_mid: int | None
+    position: int
 
 
 @dataclass
@@ -287,6 +343,7 @@ class EmailMessage:
     thread_references: list[ThreadReference] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
     quoted_references: list[QuotedReference] = field(default_factory=list)
+    headers: list[EmailHeader] = field(default_factory=list)
 ```
 
 ## Design Notes
@@ -301,9 +358,10 @@ Complete original MIME headers preserved as a single text blob. This ensures no 
 
 ### Threading
 Three-tier thread reconstruction approach:
-- **Primary**: `in_reply_to` on `message` gives direct parent lookup (from MIME In-Reply-To header)
+- **Primary**: `in_reply_to` on `message` gives direct parent lookup via MIME In-Reply-To header (original header value, never modified by the parser)
 - **Secondary**: `thread_reference` table preserves the full `References` header chain with ordering (from MIME References header — mostly absent in the Enron dataset)
-- **Tertiary**: `message_reference` table stores quoted reply/forward metadata parsed from `body_plain` during import. The parser detects `-----Original Message-----` and `-----Forwarded by...-----` separators, extracts embedded From/Sent/Subject headers, and after all emails are imported, attempts to resolve each quoted block to an actual `message.mid` by matching sender+date+subject. This provides significantly broader thread coverage than MIME headers alone (~54k+ emails have quoted content)
+- **Tertiary**: `message_reference` table stores quoted reply/forward metadata parsed from `body_plain` during import. The parser detects `-----Original Message-----` and `-----Forwarded by...-----` separators, extracts embedded From/Sent/Subject headers, and after all emails are imported, attempts to resolve each quoted block to an actual `message.mid` by matching sender+subject. Successfully resolved references are also backfilled into `in_reply_to_resolved` (the position 0 / most recent quote's resolved mid). This provides significantly broader thread coverage than MIME headers alone (~54k+ emails have quoted content)
+- The search server should check `in_reply_to` first (authoritative MIME header), then fall back to `in_reply_to_resolved` (integer FK to mid), then consult `message_reference` for the full quote chain
 
 Note: The MySQL dump contains a `referenceinfo` table with similar quoted email content (~54,778 rows). We parse directly from `body_plain` instead of importing `referenceinfo` because: (a) it gives coverage for all emails, not just those in the dump, and (b) the MIME source is the authoritative data source for this project
 

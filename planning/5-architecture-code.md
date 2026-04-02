@@ -92,6 +92,15 @@ class Attachment:
     content_disposition: str | None  # "inline" or "attachment"
     size_bytes: int | None
     charset: str | None = None
+    source: str = "mime"             # "mime" = from MIME part, "body_reference" = from <<filename>> in body text
+
+
+@dataclass
+class EmailHeader:
+    """A single email header name/value pair."""
+    name: str
+    value: str
+    position: int                    # Order in original headers (0-based)
 
 
 @dataclass
@@ -110,6 +119,19 @@ class Employee:
     folder: str | None = None
     status: str | None = None
     email_addresses: list[EmployeeEmail] = field(default_factory=list)
+
+
+@dataclass
+class MessageReference:
+    """A resolved quoted reply/forward reference row in the message_reference table.
+    Note: Currently unused in the parser — QuotedReference is used during import.
+    Exists for completeness with the database schema."""
+    mid: int
+    quoted_sender: str | None
+    quoted_date: str | None
+    quoted_subject: str | None
+    resolved_mid: int | None
+    position: int
 
 
 @dataclass
@@ -143,6 +165,7 @@ class EmailMessage:
     thread_references: list[ThreadReference] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
     quoted_references: list[QuotedReference] = field(default_factory=list)
+    headers: list[EmailHeader] = field(default_factory=list)
 ```
 
 
@@ -176,7 +199,8 @@ class Database(config: Configuration) {
 data class MessageRecord(
     val mid: Int,
     val messageId: String,
-    val inReplyTo: String?,
+    val inReplyTo: String?,             // MIME In-Reply-To header
+    val inReplyToResolved: Int?,        // Backfilled FK to message(mid) from resolved quoted references
     val date: String,               // ISO 8601 with timezone offset
     val sender: String,
     val senderName: String?,
@@ -217,7 +241,17 @@ data class AttachmentRecord(
     val contentType: String,
     val contentDisposition: String?,
     val sizeBytes: Int?,
-    val charset: String?
+    val charset: String?,
+    val source: String                  // "mime" = from MIME part, "body_reference" = from <<filename>> in body text
+)
+
+/** Represents a single email header row. */
+data class EmailHeaderRecord(
+    val hid: Int,
+    val mid: Int,
+    val name: String,
+    val value: String,
+    val position: Int
 )
 
 /** Represents an employee directory row. */
@@ -235,6 +269,18 @@ data class EmployeeEmailRecord(
     val eid: Int,
     val address: String,
     val isPrimary: Boolean
+)
+
+/** Represents a quoted reply/forward reference row (parsed from body_plain).
+ *  resolved_mid is NULL when the quoted email is not in the dataset (external senders, etc). */
+data class MessageReferenceRecord(
+    val mrid: Int,
+    val mid: Int,
+    val quotedSender: String?,
+    val quotedDate: String?,
+    val quotedSubject: String?,
+    val resolvedMid: Int?,              // FK to message(mid), NULL if unresolvable
+    val position: Int                   // 0 = most recent/innermost quote
 )
 ```
 
@@ -303,7 +349,9 @@ class SearchCore(db: Database, lucene: LuceneIndex, config: Configuration) {
     fun getEmailDetail(emailId: Int): EmailDetail
 
     /** Reconstruct a full conversation thread from a given email's message_id.
-     *  Walks in_reply_to + thread_reference to find all emails in the chain, ordered by date. */
+     *  Checks in_reply_to first (authoritative MIME header), then falls back to in_reply_to_resolved
+     *  (backfilled FK from quote parsing). Also walks thread_reference (MIME References header)
+     *  and message_reference (resolved quoted blocks) for the full chain, ordered by date. */
     fun getThread(emailId: Int): ThreadResponse
 
     /** Find emails related to a specific email by content similarity. */
@@ -390,7 +438,9 @@ data class EmailDetail(
     val message: MessageRecord,
     val recipients: List<RecipientRecord>,
     val attachments: List<AttachmentRecord>,
-    val threadReferences: List<ThreadReferenceRecord>,
+    val threadReferences: List<ThreadReferenceRecord>,   // From MIME References header (often empty for Enron)
+    val messageReferences: List<MessageReferenceRecord>,  // From parsed quoted blocks in body_plain
+    val headers: List<EmailHeaderRecord>,                 // All MIME headers, ordered by position
     val employee: EmployeeRecord?,          // Null if sender is not a known employee
 )
 ```
@@ -483,7 +533,8 @@ data class SearchResultSummaryDto(
 data class EmailDetailDto(
     val id: Int,
     val messageId: String,
-    val inReplyTo: String?,
+    val inReplyTo: String?,             // Original MIME In-Reply-To header
+    val inReplyToResolved: Int?,        // Backfilled FK from resolved quoted references
     val sender: String,
     val senderName: String?,
     val recipients: List<RecipientDto>,
@@ -498,8 +549,10 @@ data class EmailDetailDto(
     val sourcePath: String,
     val hasAttachments: Boolean,
     val attachments: List<AttachmentDto>,
-    val threadReferences: List<String>,     // Ordered list of referenced message IDs
-    val rawHeaders: String,
+    val threadReferences: List<String>,     // From MIME References header (ordered message IDs, often empty for Enron)
+    val messageReferences: List<MessageReferenceDto>, // From parsed quoted blocks in body_plain
+    val headers: List<EmailHeaderDto>,               // All MIME headers, ordered by position
+    val rawHeaders: String,                          // Raw headers blob preserved for exact reproduction
     val employeeName: String?,
     val employeeStatus: String?
 )
@@ -521,7 +574,23 @@ data class RecipientDto(
 data class AttachmentDto(
     val filename: String?,
     val contentType: String,
-    val sizeBytes: Int?
+    val sizeBytes: Int?,
+    val source: String                      // "mime" or "body_reference"
+)
+
+/** Email header DTO. */
+data class EmailHeaderDto(
+    val name: String,
+    val value: String
+)
+
+/** Quoted reply/forward reference DTO. */
+data class MessageReferenceDto(
+    val quotedSender: String?,
+    val quotedDate: String?,
+    val quotedSubject: String?,
+    val resolvedEmailId: Int?,          // Null if the quoted email is not in the dataset
+    val position: Int
 )
 
 /** Health check DTO. */
