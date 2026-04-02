@@ -20,8 +20,15 @@ repositories {
 }
 
 dependencies {
-    // This dependency is used by the application.
-    implementation(libs.guava)
+    implementation(libs.lucene.core)
+    implementation(libs.lucene.queries)
+    implementation(libs.lucene.queryparser)
+    implementation(libs.lucene.highlighter)
+    implementation(libs.lucene.analysis.common)
+
+    implementation(libs.exposed.core)
+    implementation(libs.exposed.jdbc)
+    implementation(libs.sqlite.jdbc)
 }
 
 testing {
@@ -43,5 +50,5 @@ java {
 
 application {
     // Define the main class for the application.
-    mainClass = "org.example.AppKt"
+    mainClass = "dev.emailsfts.AppKt"
 }
