@@ -8,13 +8,3 @@ package dev.emailsfts
 class SearchCore(config: Configuration) {
     // fun search, getEmail, getThread, findRelated
 }
-
-
-class SearchinputParser(config: Configuration) {
-    // fun parse, explain
-}
-
-class SearchExporter {
-    // exportTo*
-}
-

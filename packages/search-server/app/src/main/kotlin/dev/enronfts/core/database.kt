@@ -1,5 +1,5 @@
 /**
- *  This file contains the class that configures and provides the database connection object
+ *  This file contains the class that configures and provides the database connection
  */
 
 package dev.emailsfts
@@ -7,7 +7,7 @@ package dev.emailsfts
 import org.jetbrains.exposed.v1.jdbc.Database
 
 class Database(
-    private val config: Configuration
+    private val appConfig: Configuration
 ) {
 
     lateinit var connectionString: String
@@ -17,7 +17,7 @@ class Database(
         private set
 
     fun init(): Database {
-        connectionString = "jdbc:sqlite:${config.sqliteDbFilePath}?journal_mode=WAL&foreign_keys=ON"
+        connectionString = "jdbc:sqlite:${appConfig.sqliteDbFilePath}?journal_mode=WAL&foreign_keys=ON"
 
         db = Database.connect(connectionString, "org.sqlite.JDBC")
 

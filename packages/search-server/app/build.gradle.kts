@@ -49,6 +49,8 @@ java {
 }
 
 application {
+    applicationDefaultJvmArgs = listOf("-Xmx256m")
+
     // Define the main class for the application.
     mainClass = "dev.emailsfts.AppKt"
 }
