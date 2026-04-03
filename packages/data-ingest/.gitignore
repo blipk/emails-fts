@@ -6,6 +6,8 @@ src/data_ingest/data/*.gz
 
 # Generated database
 *.db
+*.db-shm
+*.db-wal
 
 # Python
 __pycache__/

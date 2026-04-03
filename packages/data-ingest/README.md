@@ -2,6 +2,14 @@
 
 Parses the Enron MIME email dataset (~500k emails) and MySQL employee dump into a normalised SQLite database. Uses Python's built-in `email` module for MIME parsing and `sqlglot` for MySQL-to-SQLite transpilation of the employee data.
 
+The email data dump files `enron_mail_20150507.tar.gz` and `enron-mysqldump_v5.sql.gz` are required and looked for in the `./src/data_ingest/data` directory.
+
+The data files are available at these links:
+
+http://www.ahschulz.de/enron-email-data/
+https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz
+
+
 ## Usage
 
 ```bash
