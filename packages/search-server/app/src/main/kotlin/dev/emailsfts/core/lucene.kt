@@ -1,41 +1,97 @@
 /**
- * This file contains the
+ * This file contains the main class for working with the Lucene search Index
  */
 
 package dev.emailsfts.core
 
 import dev.emailsfts.core.models.*
 
+import java.io.Closeable
+import java.nio.file.Path
+import java.time.OffsetDateTime
+
 import org.apache.lucene.document.*
+import org.apache.lucene.store.FSDirectory
 import org.apache.lucene.index.IndexWriter
 import org.apache.lucene.index.IndexWriterConfig
 import org.apache.lucene.index.DirectoryReader
-import org.apache.lucene.store.FSDirectory
+import org.apache.lucene.queries.mlt.MoreLikeThis
+import org.apache.lucene.search.BooleanClause
+import org.apache.lucene.search.BooleanQuery
+import org.apache.lucene.search.IndexSearcher
+import org.apache.lucene.search.Query
+import org.apache.lucene.search.ScoreDoc
+import org.apache.lucene.search.highlight.Highlighter
+import org.apache.lucene.search.highlight.QueryScorer
+import org.apache.lucene.search.highlight.SimpleHTMLFormatter
+import org.apache.lucene.search.highlight.SimpleSpanFragmenter
 
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.core.eq
 
-import java.nio.file.Path
-import java.time.OffsetDateTime
 
-class LuceneIndex(
+class LuceneCore(
     private val appConfig: Configuration,
     private val db: Database
-) {
+) : Closeable {
+
+    private val indexDirectoryPath = Path.of(appConfig.luceneIndexDirPath)
+
+    private val indexDirectory = FSDirectory.open(
+        indexDirectoryPath
+    )
+
+    // use lateinit to prevent errors when the index doesn't yet exist
+    // ensureReaderOpen() must first be called in `search` and other methods that require it
+    private lateinit var directoryReader: DirectoryReader
+    private lateinit var indexSearcher: IndexSearcher
+
+    private fun ensureReaderOpen() {
+        // get reference to directory property to see if it's initialized
+        if (!::directoryReader.isInitialized) {
+            directoryReader = DirectoryReader.open(indexDirectory)
+            indexSearcher = IndexSearcher(directoryReader)
+        }  else {
+            // index might have changed via `buildIndex` before a `search` call so update the reader here
+            val newReader = DirectoryReader.openIfChanged(directoryReader)
+            if (newReader != null) {
+                directoryReader.close()
+                directoryReader = newReader
+                indexSearcher = IndexSearcher(directoryReader)
+            }
+        }
+    }
+
+    // implement Closeable to allow with `.use` scope function
+    override fun close() {
+        if (::directoryReader.isInitialized) directoryReader.close()
+        indexDirectory.close()
+    }
 
     /**
      * Checks if both the index directory exists and contains a valid Lucene index
      */
     fun checkIndexExists(): Boolean {
-        val path = Path.of(appConfig.luceneIndexDirPath)
-
-        if (!path.toFile().exists())
+        if (!indexDirectoryPath.toFile().exists())
             return false
 
-        val indexFileDirectory = FSDirectory.open(path)
+        return DirectoryReader.indexExists(indexDirectory)
+    }
 
-        return indexFileDirectory.use { DirectoryReader.indexExists(it) }
+    fun indexStats(): IndexStatsResult {
+        ensureReaderOpen()
+
+        val indexSizeBytes = indexDirectory
+            .listAll()
+            .sumOf { indexDirectory.fileLength(it) }
+
+        val documentCount = directoryReader.numDocs()
+
+        return IndexStatsResult(
+            documentCount = documentCount,
+            indexSizeBytes = indexSizeBytes
+        )
     }
 
     fun buildIndex() {
@@ -52,11 +108,7 @@ class LuceneIndex(
         // Create or override existing index
         config.openMode = IndexWriterConfig.OpenMode.CREATE
 
-        val indexFileDirectory = FSDirectory.open(
-            Path.of(appConfig.luceneIndexDirPath)
-        )
-
-        val writer = IndexWriter(indexFileDirectory, config)
+        val writer = IndexWriter(indexDirectory, config)
 
         println("Building Lucene Index")
 
@@ -66,31 +118,33 @@ class LuceneIndex(
             // exposed translates this to a SELECT COUNT(*) query
             val totalMessages = Messages.selectAll().count()
 
-            val BATCH_SIZE = 100
+            val batchSize = 100
 
             Messages.selectAll()
-                .fetchBatchedResults(batchSize = BATCH_SIZE)
+                .fetchBatchedResults(batchSize = batchSize)
                 .forEachIndexed { batchIndex, batch ->
                     batch.forEachIndexed { index, resultRow ->
 
-                    val absoluteIndex = batchIndex * BATCH_SIZE + index
+                    val absoluteIndex = batchIndex * batchSize + index
 
-                    println("Creating index document from message $absoluteIndex of $totalMessages")
+                    println("Creating index document from email message $absoluteIndex of $totalMessages")
 
                     val doc = Document().apply {
 
+                        // Stored fields are stored and returned with the document and not indexed, others are just built into the index
+                        // `mid` was originally a StoredField but we now require it to be indexed so it can be excluded with a Query in findRelated
 
-                        // Stored fields are stored and returned with the document, others are just built into the index
-
-                        // We can use the message ID `mid`` to look it up after searches using the index
-                        add(StoredField("mid", resultRow[Messages.mid]))
+                        // We can use the message ID `mid` to look up details in the SQL database one we have the document
+                        add(IntField("mid", resultRow[Messages.mid], Field.Store.YES))
 
                         // Text fields are for tokenized full text search,
-                        // we don't store the field value as it can be found in the SQL database via the mid
-                        add(TextField("subject", resultRow[Messages.subject] ?: "", Field.Store.NO))
-                        add(TextField("body", resultRow[Messages.bodyPlain] ?: "", Field.Store.NO))
-                        add(TextField("sender", resultRow[Messages.sender], Field.Store.NO))
-                        add(TextField("senderName", resultRow[Messages.senderName] ?: "", Field.Store.NO))
+                        // we don't usually need store all the field values as they can be found in the SQL database via the mid,
+                        // however the Lucene highlighter needs them,
+                        // alternatively we could make another query to the SQL database for the highlighter
+                        add(TextField("subject", resultRow[Messages.subject] ?: "", Field.Store.YES))
+                        add(TextField("body", resultRow[Messages.bodyPlain] ?: "", Field.Store.YES))
+                        add(TextField("sender", resultRow[Messages.sender], Field.Store.YES))
+                        add(TextField("senderName", resultRow[Messages.senderName] ?: "", Field.Store.YES))
 
                         // KeywordField is similar to StringField in that they are used for filtering and exact search,
                         // except the keyword field also stores the value for sorting and faceting on the field
@@ -157,35 +211,141 @@ class LuceneIndex(
 
             writer.commit()
             writer.close()
-            indexFileDirectory.close()
 
             val indexSavedPath = Path.of(appConfig.luceneIndexDirPath).toAbsolutePath()
+            val indexStats = indexStats()
+            println(indexStats)
             println("Index Build Completed - created in directory $indexSavedPath")
         }
     }
 
-    // fun search(query: Query, page: Int, pageSize: Int): LuceneSearchResult {
+    fun search(
+        query: Query,
+        cursorDoc: ScoreDoc? = null,
+        pageSize: Int = appConfig.defaultPageSize
+    ): LuceneSearchResult {
 
-    // }
+        ensureReaderOpen()
 
-    // fun findRelated(documentId: Int, maxResults: Int): LuceneSearchResult {
-    //     // lucene MoreLikeThis
-    // }
+        val effectivePageSize = pageSize.coerceAtMost(appConfig.maxPageSize)
+
+        // cursorDoc is the last doc from the last search and is used as a pagination cursor
+        val topDocs = if (cursorDoc == null) {
+            indexSearcher.search(query, effectivePageSize)
+        } else {
+            indexSearcher.searchAfter(cursorDoc, query, effectivePageSize)
+        }
+
+        val hits = topDocs.scoreDocs
+
+        val luceneHits = hitsToLuceneHits(hits.toList(), query)
+
+        val totalHits = topDocs.totalHits.value()
+        val totalPages = ((totalHits + effectivePageSize - 1) / effectivePageSize).toInt()
+
+        return LuceneSearchResult(
+            hits = luceneHits,
+            totalHits = totalHits,
+            totalPages = totalPages,
+            lastScoreDoc = topDocs.scoreDocs.lastOrNull()
+        )
+
+    }
+
+    fun findRelated(
+        emailId: Int,
+        documentId: Int,
+        cursorDoc: ScoreDoc? = null,
+        pageSize: Int = appConfig.defaultPageSize
+    ): LuceneSearchResult {
+
+        ensureReaderOpen()
+
+        // this could use a lot more tweaking
+        val mlt = MoreLikeThis(directoryReader)
+        mlt.analyzer = appConfig.luceneAnalyzer
+        mlt.fieldNames = arrayOf("subject", "body")
+        mlt.minTermFreq = 1
+        mlt.minDocFreq = 1
+
+        val mltQuery = mlt.like(documentId)
+
+        // Exclude the source document
+        val query = BooleanQuery.Builder()
+            .add(mltQuery, BooleanClause.Occur.MUST)
+            .add(
+                IntField.newExactQuery(
+                    "mid",
+                    emailId
+                ),
+                BooleanClause.Occur.MUST_NOT
+            )
+            .build()
+
+        return search(query, cursorDoc, pageSize)
+
+    }
+
+    private fun hitsToLuceneHits(
+        hits: List<ScoreDoc>,
+        query: Query,
+    ): List<LuceneHit> {
+
+        // Set up formatter and scorer and use with the hightlighter to highlight matched fragments
+        val formatter = SimpleHTMLFormatter("<mark>", "</mark>")
+        val scorer = QueryScorer(query)
+        val highlighter = Highlighter(formatter, scorer)
+        highlighter.textFragmenter = SimpleSpanFragmenter(scorer, 120)
+
+        // Loop through the hits and build a List of our LuceneHit data classes
+        val storedFields = indexSearcher.storedFields()
+        val luceneHits: List<LuceneHit> = hits.map { hit ->
+            val doc = storedFields.document(hit.doc)
+            val mailId = doc.getField("mid").numericValue().toInt()
+
+            val highlightedFragments = mutableMapOf<String, List<String>>()
+            for (field in listOf("subject", "body", "sender")) {
+                val text = doc.get(field) ?: continue
+                val tokenStream = appConfig.luceneAnalyzer.tokenStream(field, text)
+                val fragments = highlighter.getBestFragments(tokenStream, text, 3)
+                if (fragments.isNotEmpty()) {
+                    highlightedFragments[field] = fragments.toList()
+                }
+            }
+
+            LuceneHit(
+                luceneDocId = hit.doc,
+                score = hit.score,
+                emailId = mailId,
+                highlightedFragments = highlightedFragments
+            )
+        }
+
+        return luceneHits
+    }
 
 }
 
-data class IndexResult(
+data class IndexStatsResult(
     val documentCount: Int,
     val indexSizeBytes: Long,
 )
 
 data class LuceneSearchResult(
     val hits: List<LuceneHit>,
-    val totalHits: Long
-)
+    val totalHits: Long,
+    val totalPages: Int,
+    val lastScoreDoc: ScoreDoc?  // cursor for next page
+) {
+    val hasNextPage: Boolean get() = lastScoreDoc != null && hits.isNotEmpty()
+}
 
 data class LuceneHit(
-    val emailId: Int,
+    val luceneDocId: Int,
     val score: Float,
+
+    val emailId: Int,
+
+    // Map of fieldName -> highlighted fragments
     val highlightedFragments: Map<String, List<String>>
 )
