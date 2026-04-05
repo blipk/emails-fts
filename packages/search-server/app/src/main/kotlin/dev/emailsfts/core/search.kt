@@ -2,7 +2,7 @@
  * This file contains the core Search class (and associated classes) that integrat with Lucene/SQLite and provides the application core user functionality
  */
 
-package dev.emailsfts
+package dev.emailsfts.core
 
 
 class SearchCore(config: Configuration) {

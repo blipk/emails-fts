@@ -2,7 +2,7 @@
  * This file contains the class responsible for application wide configuration
  */
 
-package dev.emailsfts
+package dev.emailsfts.core
 
 import org.apache.lucene.analysis.StopwordAnalyzerBase;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
@@ -13,7 +13,7 @@ import org.apache.lucene.analysis.en.EnglishAnalyzer;
  **/
 data class Configuration(
     val sqliteDbFilePath: String,
-    val luceneIndexFilePath: String,
+    val luceneIndexDirPath: String,
 
     val luceneAnalyzer: StopwordAnalyzerBase,
 
@@ -28,7 +28,7 @@ data class Configuration(
     companion object {
         val DEFAULT = Configuration(
             sqliteDbFilePath = "./../../data-ingest/enron_emails.db",
-            luceneIndexFilePath = "./data/lucene-index",
+            luceneIndexDirPath = "./data/lucene-index",
             luceneAnalyzer = EnglishAnalyzer(),
             defaultPageSize = 25,
             maxPageSize = 100,

@@ -2,19 +2,19 @@
  * This file contains the class that converts application specific search query strings into those compatible with lucences syntax
  */
 
-package dev.emailsfts
+package dev.emailsfts.core
 
 import org.apache.lucene.search.Query
 import org.apache.lucene.queryparser.classic.MultiFieldQueryParser
 
 
 class SearchInputParser(
-    private val appConfig: Configuration
+    appConfig: Configuration
 ) {
 
     // apply the search term to multiple fields (body + subject + sender)
-    // with weights for each of the search terms
-    private val weights = mapOf(
+    // with weights/boosts for each of the search terms
+    private val boosts = mapOf(
         "subject" to 2.0f,
         "body" to 1.0f,
         "sender" to 1.5f
@@ -22,7 +22,7 @@ class SearchInputParser(
     private val luceneQueryParser = MultiFieldQueryParser(
         arrayOf("subject", "body", "sender", "senderName"),
         appConfig.luceneAnalyzer,
-        weights
+        boosts
     )
 
     fun parse(rawQuery: String): Query {

@@ -2,7 +2,9 @@
  * This file contains the API server that is a bridge between the Search class and web client
  */
 
-package dev.emailsfts
+package dev.emailsfts.api
+
+import dev.emailsfts.core.*
 
 class Api(
     searchCore: SearchCore,

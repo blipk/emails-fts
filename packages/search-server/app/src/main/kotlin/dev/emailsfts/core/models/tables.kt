@@ -3,7 +3,7 @@
  * Maps to the SQLite schema defined in planning/4-data-import-schema.md.
  */
 
-package dev.emailsfts
+package dev.emailsfts.core.models
 
 import org.jetbrains.exposed.v1.core.Table
 

@@ -3,7 +3,7 @@
  *
  */
 
-package dev.emailsfts
+package dev.emailsfts.core
 
 class SearchExporter {
     // exportTo*
