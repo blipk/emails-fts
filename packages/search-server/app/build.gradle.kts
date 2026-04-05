@@ -29,6 +29,8 @@ dependencies {
     implementation(libs.exposed.core)
     implementation(libs.exposed.jdbc)
     implementation(libs.sqlite.jdbc)
+
+    implementation(libs.clikt)
 }
 
 testing {
@@ -53,4 +55,17 @@ application {
 
     // Define the main class for the application.
     mainClass = "dev.emailsfts.AppKt"
+}
+
+// // clikt was pulling in 2.3.0 which is incompatible with fwcd's Kotlin vscode extension
+// have switched to the official JetBrains extension now
+// configurations.all {
+//     resolutionStrategy {
+//         force("org.jetbrains.kotlin:kotlin-stdlib:2.2.21")
+//     }
+// }
+
+// Allow standard input from `gradle run`
+tasks.named<JavaExec>("run") {
+    standardInput = System.`in`
 }
