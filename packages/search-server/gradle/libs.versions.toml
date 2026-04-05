@@ -19,7 +19,8 @@ lucene-expressions = { group = "org.apache.lucene", name = "lucene-expressions",
 exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "exposed" }
 exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version = "3.51.3.0" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version = "5.1.0" }
 
 
 [plugins]
-kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version = "2.2.21" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version = "2.3.10" }
