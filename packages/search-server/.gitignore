@@ -7,3 +7,7 @@ bin
 
 # Ignore Kotlin plugin data
 .kotlin
+
+
+# Ignore built Lucene index
+*/data/lucene-index
