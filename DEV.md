@@ -65,3 +65,5 @@
 - implement kotlin app tests
 - initial C4 model could definitely be improved
 - there is no web client yet
+- improve CLI display and interaction by using a TUI library
+- filter out headers and collapse quote blocks in body text, these should also be excluded from the searching and highlighting
