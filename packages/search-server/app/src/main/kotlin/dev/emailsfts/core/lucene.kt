@@ -173,7 +173,7 @@ class LuceneCore(
                             .where { Recipients.mid eq resultRow[Messages.mid] }
                             .joinToString(" ") { it[Recipients.address] }
 
-                        add(TextField("receiver", messageRecipientAddresses, Field.Store.NO))
+                        add(TextField("receiver", messageRecipientAddresses, Field.Store.YES))
 
                         // Add denormalized attachment names for attachment filename search
                         val messageAttachmentNames = Attachments
@@ -181,7 +181,7 @@ class LuceneCore(
                             .where { Attachments.mid eq resultRow[Messages.mid] }
                             .joinToString(" ") { it[Attachments.filename] ?: "" }
 
-                        add(TextField("attachments", messageAttachmentNames, Field.Store.NO))
+                        add(TextField("attachments", messageAttachmentNames, Field.Store.YES))
 
 
                         // Add denormalized employee names for search by real name
@@ -326,7 +326,7 @@ class LuceneCore(
         val storedFields = indexSearcher.storedFields()
         val luceneHits: List<LuceneHit> = hits.map { hit ->
             val doc = storedFields.document(hit.doc)
-            val mailId = doc.getField("mid").numericValue().toInt()
+            val messageId = doc.getField("mid").numericValue().toInt()
 
             val highlightedFragments = mutableMapOf<String, List<String>>()
             for (field in listOf("subject", "body", "sender", "senderName")) {
@@ -341,7 +341,7 @@ class LuceneCore(
             LuceneHit(
                 luceneDocId = hit.doc,
                 score = hit.score,
-                emailId = mailId,
+                messageId = messageId,
                 highlightedFragments = highlightedFragments
             )
         }
@@ -369,7 +369,7 @@ data class LuceneHit(
     val luceneDocId: Int,
     val score: Float,
 
-    val emailId: Int,
+    val messageId: Int,
 
     // Map of fieldName -> highlighted fragments
     val highlightedFragments: Map<String, List<String>>
