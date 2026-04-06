@@ -2,13 +2,20 @@
 
 Parses the Enron MIME email dataset (~500k emails) and MySQL employee dump into a normalised SQLite database. Uses Python's built-in `email` module for MIME parsing and `sqlglot` for MySQL-to-SQLite transpilation of the employee data.
 
-The email data dump files `enron_mail_20150507.tar.gz` and `enron-mysqldump_v5.sql.gz` are required and looked for in the `./src/data_ingest/data` directory.
+
+## Data Sources
+
+These email data dump files are required:
+
+- `enron_mail_20150507.tar.gz` — MIME email archive
+- `enron-mysqldump_v5.sql.gz` — MySQL employee directory dump
+
+They are searched for in the `./src/data_ingest/data` directory by default, archives are extracted to `data/extracted/` on first run and reused on subsequent runs.
 
 The data files are available at these links:
 
-http://www.ahschulz.de/enron-email-data/
-https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz
-
+- http://www.ahschulz.de/enron-email-data/
+- https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz
 
 ## Usage
 
@@ -47,12 +54,3 @@ uv run data-ingest --continue
 ## Schema
 
 Six tables: `message`, `recipient`, `thread_reference`, `attachment`, `employee`, `employee_email`. See [schema.sql](src/data_ingest/schema.sql) for full definitions.
-
-## Bundled Data
-
-The package includes the source datasets in `src/data_ingest/data/` and uses them by default:
-
-- `enron_mail_20150507.tar.gz` — MIME email archive
-- `enron-mysqldump_v5.sql.gz` — MySQL employee directory dump
-
-MIME archives are extracted to `data/extracted/` on first run and reused on subsequent runs.
