@@ -4,8 +4,11 @@
 
 package dev.emailsfts.core
 
-import dev.emailsfts.core.models.MessageRecord
 import dev.emailsfts.core.models.Messages
+import dev.emailsfts.core.models.MessageRecord
+import dev.emailsfts.core.models.RecipientRecord
+import dev.emailsfts.core.models.Recipients
+
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -47,7 +50,8 @@ class SearchCore(
                     SearchHit(
                         luceneHit = hit,
                         // N + 1 on SQLite but it handles it well and pre-fetching pushes system memory constraints
-                        messageRecord = getEmail(hit.emailId)!!
+                        messageRecord = getMessage(hit.messageId)!!,
+                        recipientRecords = getRecipients(hit.messageId)
                     )
                 )
             }
@@ -61,15 +65,15 @@ class SearchCore(
 
     }
 
-    fun findRelated(emailId: Int) {
+    fun findRelated(messageId: Int) {
         // get lucene doc id from email id and pass to Lucene.findRelated
     }
 
-    fun getEmail(emailId: Int): MessageRecord? {
-        return getEmails(listOf(emailId)).firstOrNull()
+    fun getMessage(messageId: Int): MessageRecord? {
+        return getMessages(listOf(messageId)).firstOrNull()
     }
 
-    fun getEmails(emailIds: List<Int>): List<MessageRecord> {
+    fun getMessages(messageIds: List<Int>): List<MessageRecord> {
 
         fun toMessageRecord(resultRow: ResultRow): MessageRecord {
             return MessageRecord(
@@ -95,14 +99,14 @@ class SearchCore(
 
         val messageRecords = transaction(db.db) {
             Messages.selectAll()
-            .where { Messages.mid inList emailIds }
+            .where { Messages.mid inList messageIds }
             .map { row -> toMessageRecord(row) }
         }
 
         return messageRecords
     }
 
-    fun getThread(emailId: Int) {
+    fun getThread(messageId: Int) {
         /*
 
         Check in_reply_to first (MIME header),
@@ -113,6 +117,29 @@ class SearchCore(
 
         for the full chain, ordered by date.
         */
+    }
+
+    fun getRecipients(messageId: Int): List<RecipientRecord> {
+        return getRecipients(listOf(messageId))
+    }
+
+    fun getRecipients(messageIds: List<Int>): List<RecipientRecord> {
+
+        fun toRecipientRecord(resultRow: ResultRow): RecipientRecord {
+            return RecipientRecord(
+                rid = resultRow[Recipients.rid],
+                mid = resultRow[Recipients.mid],
+                rtype = resultRow[Recipients.rtype],
+                address = resultRow[Recipients.address],
+                displayName = resultRow[Recipients.displayName],
+            )
+        }
+
+        return transaction(db.db) {
+            Recipients.selectAll()
+                .where { Recipients.mid inList messageIds }
+                .map { row -> toRecipientRecord(row) }
+        }
     }
 
 }
@@ -132,5 +159,6 @@ data class SearchResult(
 
 data class SearchHit(
     val luceneHit: LuceneHit,
-    val messageRecord: MessageRecord
+    val messageRecord: MessageRecord,
+    val recipientRecords: List<RecipientRecord>
 )
