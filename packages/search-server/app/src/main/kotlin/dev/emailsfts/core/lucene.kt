@@ -21,6 +21,7 @@ import org.apache.lucene.search.BooleanQuery
 import org.apache.lucene.search.IndexSearcher
 import org.apache.lucene.search.Query
 import org.apache.lucene.search.ScoreDoc
+import org.apache.lucene.search.TopScoreDocCollectorManager
 import org.apache.lucene.search.highlight.Highlighter
 import org.apache.lucene.search.highlight.QueryScorer
 import org.apache.lucene.search.highlight.SimpleHTMLFormatter
@@ -162,6 +163,10 @@ class LuceneCore(
 
                         add(LongField("date", epochMillis, Field.Store.YES))
 
+
+                        // Fetch data from other tables, this is N + 1 on SQLite
+                        // but it handles it well and pre-fetching pushes system memory constraints
+
                         // Add denormalized recipients for to: search
                         val messageRecipientAddresses = Recipients
                             .selectAll()
@@ -230,11 +235,22 @@ class LuceneCore(
         val effectivePageSize = pageSize.coerceAtMost(appConfig.maxPageSize)
 
         // cursorDoc is the last doc from the last search and is used as a pagination cursor
-        val topDocs = if (cursorDoc == null) {
-            indexSearcher.search(query, effectivePageSize)
-        } else {
-            indexSearcher.searchAfter(cursorDoc, query, effectivePageSize)
-        }
+
+
+        // The fuzzy expansion from the InputParser can cause more results to be found as pagination continues, leading to incorrect total page counts
+        // Using TopScoreDocCollectorManager with Integer.MAX_VALUE forces an exact total hit count instead of an approximation
+        val collectorManager = TopScoreDocCollectorManager(
+            effectivePageSize,
+            cursorDoc,
+            Integer.MAX_VALUE
+        )
+        val topDocs = indexSearcher.search(query, collectorManager)
+
+        // val topDocs = if (cursorDoc == null) {
+        //     indexSearcher.search(query, effectivePageSize)
+        // } else {
+        //     indexSearcher.searchAfter(cursorDoc, query, effectivePageSize)
+        // }
 
         val hits = topDocs.scoreDocs
 
@@ -292,10 +308,19 @@ class LuceneCore(
     ): List<LuceneHit> {
 
         // Set up formatter and scorer and use with the hightlighter to highlight matched fragments
-        val formatter = SimpleHTMLFormatter("<mark>", "</mark>")
-        val scorer = QueryScorer(query)
+        // this should probablye be passed as a param as it will differ between CLI and API
+        // val formatter = SimpleHTMLFormatter("<mark>", "</mark>")
+
+        // ANSI escape codes to reset styling from clikt and apply green highlighting on matched terms
+        val formatter = SimpleHTMLFormatter("\u001b[1;32m", "\u001b[0m")
+
+        // Highlighter doesnt like the negative weights on the FuzzyQueries that InputParser injects
+        // .rewrite() expands those terms against the index
+        val rewrittenQuery = query.rewrite(indexSearcher)
+
+        val scorer = QueryScorer(rewrittenQuery)
         val highlighter = Highlighter(formatter, scorer)
-        highlighter.textFragmenter = SimpleSpanFragmenter(scorer, 120)
+        highlighter.textFragmenter = SimpleSpanFragmenter(scorer, 200)
 
         // Loop through the hits and build a List of our LuceneHit data classes
         val storedFields = indexSearcher.storedFields()
@@ -304,7 +329,7 @@ class LuceneCore(
             val mailId = doc.getField("mid").numericValue().toInt()
 
             val highlightedFragments = mutableMapOf<String, List<String>>()
-            for (field in listOf("subject", "body", "sender")) {
+            for (field in listOf("subject", "body", "sender", "senderName")) {
                 val text = doc.get(field) ?: continue
                 val tokenStream = appConfig.luceneAnalyzer.tokenStream(field, text)
                 val fragments = highlighter.getBestFragments(tokenStream, text, 3)
