@@ -31,7 +31,7 @@ data class Configuration(
             luceneAnalyzer = EnglishAnalyzer(),
             defaultPageSize = 25,
             maxPageSize = 100,
-            fuzzyMatchDistance = 2,
+            fuzzyMatchDistance = 0,
             apiPort = 8080
         )
     }
