@@ -20,6 +20,8 @@
 - read kotlin and gradle getting started guides and standard library overviews
 - set up kotlin development environment and initialize Kotlin package
 - review planning documents and finalise class and data model interfaces before implementation
+- try to find and read a lot of lucene docs, experimenting with the core concepts and their many variations (query parsers, indexing, analyzers, documents), also reading more Kotlin docs and concepts (elvis null coalescing operator, trailing lambdas, companion objects, `when` matcher, `Unit` type, trailing lambdas, data classes, extension functions, scope functions - let, apply, run, also, and with. `it`/`this` accessors, lambda with receiver, interface delegation, objects and data objects, `open` inheritable classes, `sealed` classes, `enum` classes, backing `field` keyword in get/set, extension and delegated properties, safe cast `as?`)
+- create first functions for lucene index building and query parsing
 
 ### Python Email Data Set Parser
 - curate planning context prompt with system model and prompt LLM agent and directive to create the python data processor.
@@ -33,33 +35,33 @@
 - further analysis of the source emails reveals custom headers such as `X-FileName` that could be useful in reconstructing attachments, worked with LLM to investigate any other information that may be useful in a legal analysis context
 - discovered plenty of useful metadata, mostly in the headers of original emails as well as quoted emails - mostly noted them down at this stage but decided to add headers and email references to relational schema for extra search, and implement extracting attachment information from identified lotus notes tags in email bodies seeing as there's none in the original email headers
 
+### TypeScript Web Client
+-
 
-3. Testing & Debugging
+## 3. Testing & Debugging
 - Build Indexes, Do Searches
+- Iteratively develop features and container integrations
+- Create more tests
 
 
-
-4. Documentation, Packaging & Deployment
+## 4. Documentation, Packaging & Deployment
 - ideally would set up podman/docker compose with caddy/nginx for a reverse proxy to serve the API and frontend build
-- will probably just make the Kotlin server serve the frontend build alongside the API, and provide a CLI script/arg that starts everything
-- compile architecture diagrams
-- complete README.md
+- would probably make the Kotlin server serve the frontend build alongside the API, and provide a CLI script/arg that starts everything
+
+
+### Kotlin/Maven/JVM annoyances
+- no dependency management from gradle wrapper
+- gradle init package has too much example comments
+- searching for `lucene` on maven central shows outdated package, `lucene-core` is correct package and doesnt show on the first page
+- the lucene docs are kind of terrible
 
 
 
-
-
-
-# Libraries
-- lucene
-- exposed
-
-
-
-
-
-### Diagram review
-- technologies
-- sqlite/lucene relationships
-- codegen docstrings and function interfaces
-
+###### TODO
+- set up ktlint
+- implement API
+    - hardest part of this is managing DTO translation which could be complicated for pagination cursors as they would need to be serialized to the web client and/or server state would need to be created and synced with a client identifier
+- implement the email threading routines
+- implement kotlin app tests
+- initial C4 model could definitely be improved
+- there is no web client yet
