@@ -123,8 +123,15 @@ class App : CliktCommand() {
 
                     for (searchHit in searchResult.searchHits) {
                         val luceneHit = searchHit.luceneHit
+                        val recipientText = searchHit.recipientRecords
+                            .groupBy { it.rtype }
+                            .map { (rtype, recipients) ->
+                                "$rtype: ${recipients.joinToString(", ") { it.displayName ?: it.address }}"
+                            }
+                            .joinToString("  ")
+
                         println(
-                            "----- email ID: ${luceneHit.emailId} - sender: ${searchHit.messageRecord.sender}  -----"
+                            "----- email ID: ${luceneHit.messageId} - from: ${searchHit.messageRecord.sender} $recipientText -----"
                         )
                         if (luceneHit.highlightedFragments.isEmpty()) {
                             val preview = searchHit.messageRecord.bodyPlain?.take(200) ?: ""
