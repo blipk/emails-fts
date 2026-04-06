@@ -4,26 +4,60 @@
 
 package dev.emailsfts.core
 
+import dev.emailsfts.core.models.MessageRecord
+import dev.emailsfts.core.models.Messages
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+
 
 class SearchCore(
-    appConfig: Configuration,
+    private val appConfig: Configuration,
     private val db: Database,
     private val lucene: LuceneCore
 ) {
 
     private val searchInputParser = SearchInputParser(appConfig)
 
-    fun search(inputQueryText: String) {
+    fun search(
+        inputQueryText: String,
+        lastSearch: LuceneSearchResult? = null,
+        pageSize: Int = appConfig.defaultPageSize,
+
+        // This is currently managed by whatever wraps this, currently the CLI, or API
+        // possibly could have the wrapper here and use elsewhere,
+        // but may get complicated with both CLI/API using it
+        pageTracker: Int = 1
+    ): SearchResult {
 
         val query = searchInputParser.parse(inputQueryText)
 
-        val searchResult = lucene.search(query)
+        val cursorDoc = lastSearch?.lastScoreDoc
 
-        println ("Found ${searchResult.totalHits} results")
+        val luceneSearchResult = lucene.search(
+            query,
+            cursorDoc,
+            pageSize
+        )
 
-        for (hit in searchResult.hits) {
-            println(hit)
+        val searchHits = buildList {
+            for (hit in luceneSearchResult.hits) {
+                add(
+                    SearchHit(
+                        luceneHit = hit,
+                        // N + 1 on SQLite but it handles it well and pre-fetching pushes system memory constraints
+                        messageRecord = getEmail(hit.emailId)!!
+                    )
+                )
+            }
         }
+
+        return SearchResult(
+            luceneResult = luceneSearchResult,
+            searchHits = searchHits,
+            currentPage = pageTracker
+        )
 
     }
 
@@ -31,8 +65,41 @@ class SearchCore(
         // get lucene doc id from email id and pass to Lucene.findRelated
     }
 
-    fun getEmail(emailId: Int) {
-        // get email from SQL
+    fun getEmail(emailId: Int): MessageRecord? {
+        return getEmails(listOf(emailId)).firstOrNull()
+    }
+
+    fun getEmails(emailIds: List<Int>): List<MessageRecord> {
+
+        fun toMessageRecord(resultRow: ResultRow): MessageRecord {
+            return MessageRecord(
+                mid = resultRow[Messages.mid],
+                messageId = resultRow[Messages.messageId],
+                inReplyTo = resultRow[Messages.inReplyTo],
+                inReplyToResolved = resultRow[Messages.inReplyToResolved],
+                date = resultRow[Messages.date],
+                sender = resultRow[Messages.sender],
+                senderName = resultRow[Messages.senderName],
+                subject = resultRow[Messages.subject],
+                bodyPlain = resultRow[Messages.bodyPlain],
+                bodyHtml = resultRow[Messages.bodyHtml],
+                contentType = resultRow[Messages.contentType],
+                charset = resultRow[Messages.charset],
+                xOrigin = resultRow[Messages.xOrigin],
+                xFolder = resultRow[Messages.xFolder],
+                sourcePath = resultRow[Messages.sourcePath],
+                hasAttachments = resultRow[Messages.hasAttachments] != 0,
+                rawHeaders = resultRow[Messages.rawHeaders],
+            )
+        }
+
+        val messageRecords = transaction(db.db) {
+            Messages.selectAll()
+            .where { Messages.mid inList emailIds }
+            .map { row -> toMessageRecord(row) }
+        }
+
+        return messageRecords
     }
 
     fun getThread(emailId: Int) {
@@ -49,3 +116,21 @@ class SearchCore(
     }
 
 }
+
+// Might be better to use an interface for this and LuceneSearchResult,
+// but for now I will use composition
+data class SearchResult(
+    // should probably decompose this and just use the ScoreDoc cursors
+    val luceneResult: LuceneSearchResult,
+
+    val searchHits: List<SearchHit>,
+    val currentPage: Int,
+)  {
+    val hasNextPage: Boolean get() =
+        luceneResult.lastScoreDoc != null && luceneResult.hits.isNotEmpty()
+}
+
+data class SearchHit(
+    val luceneHit: LuceneHit,
+    val messageRecord: MessageRecord
+)
