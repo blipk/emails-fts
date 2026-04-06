@@ -8,33 +8,39 @@ The motives were as a technical challenge and demonstration of my system archite
 
 ### Usage Instructions
 
-All package build scripts have been integrated with gradle, to build and run the project:
+The data ingestion pipeline first needs to be run using `uv`, usage details and links to download the data files are in that packages [README.md](./packages/data-ingest/README.md).
+
+Now you can build and run the web client and search server using gradle:
 
 ```bash
 # navigate to the search-server package
 cd ./packages/search-server/
 
-# runs data ingestion, builds web client & search server
+# builds web client & search server
 gradle build
 
-# runs the search server and serves the web client
-gradle run
+# builds the Lucene index from the SQLite database from data ingestion
+gradle run --args="--buildIndex"
+
+
+# do a search on an input query, the CLI will offer pagination if there are many results
+gradle run --args="--search='Search Query'"
+
+# runs the search server and serves the web client (not yet implemented)
+# gradle run --args="--run"
 ```
-
-The data ingestion pipeline will require the email data dump files `enron_mail_20150507.tar.gz` and `enron-mysqldump_v5.sql.gz` to be in the `./packages/data-ingest/src/data_ingest/data` directory, and it will take a few minutes to process them into a SQLite database.
-
-Further usage details and links to download the data files are in the data ingestion package [README.md](./packages/data-ingest/README.md)
-
 
 ### Technical Architecture
 
 The project consists of three packages:
 
 - A python data ingestion parser to convert MIME email files into a relational SQLite database
-- A kotlin search server that handles a full text search functionality using the SQLite database and Apache Lucene, it also has a RESTful HTTP interface to provide its functionality to the web frontend client.
+- A kotlin search server that handles a full text search functionality using the SQLite database and Apache Lucene, it also has a RESTful HTTP interface to provide its functionality to the web frontend client
 - A typescript web client for using the search service
 
-Here are C4 Model Diagrams representing the System Context and the complete System Containers and their relationships.
+The system was designed using the C4 Modelling System, as further explained in the next section.
+
+These are C4 Model Diagrams representing the System Context and the complete System Containers and their relationships.
 
 <details>
 <summary>System Context Diagram</summary>
@@ -83,11 +89,6 @@ Here are diagrams of the individual System Containers & Components with relation
 ![Front-end Web Client UI Container & Components](./docs/c4diagrams/frontend-client-components.png "Front-end Web Client UI Container & Components")
 </details>
 
-
-
--- screenshots of the frontend client
-
-
 ### Development process
 
 The task was analysed and researched then an appropriate system carefully planned using the C4 modelling system and structurizr DSL before being implemented with a mix of agentic coding (data ingestion + web client) and documentation reading and hand coding (main kotlin search server).
@@ -124,7 +125,7 @@ Common issues I encountered while handling, indexing and searching large corpus 
 - optimizing data ingestion methods and operations (batching, system resource management)
 - optimizing index building methods and operations
 - researching the fundamental text analysis and indexing methods and mathematical formula/algorithms required for semantic full text search (n-gram indexes, Jaccard similarity, Levenshtein automaton / distances, edit distances, BestMatch25) and deciding whether to implement them vs using an external FTS solution/library - decided on Lucene as it incorporated the most of these fundamental methods and provided clean and configurable API
-- considerations choosing and configuring different methods to index and search data for free text search: tokenization methods (text analyzers, which fields and how to store them), query parsing (input formats, filtering specifier formats, fuzzy matching distances and input term selection, weights on input terms) and querying methods (,,,)
+- considerations choosing and configuring different methods to index and search data for free text search: tokenization methods (text analyzers, which fields and how to store them), query parsing (input formats, filtering specifier formats, fuzzy matching distances and input term selection, weights on input terms) and querying methods
 - data presentation layer
 
 How would I scale to a much larger dataset (gigabytes/petabytes)?
@@ -141,7 +142,7 @@ How would I scale to multiple users?
 
 What would I improve if given more time to complete the task?
 - spend more time in the planning and analysis stage and data analysis on the email format to prevent schema changes during development
-- investigated other forensic email analysis tools in relation to the prior point
+- investigate other forensic email analysis tools in relation to the prior point
 - test development
 - lucene indexing and querying configuration
 - end user client usability
