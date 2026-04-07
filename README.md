@@ -95,19 +95,19 @@ The task was analysed and researched then an appropriate system carefully planne
 
 Documentation explaining and for the system architecture is in the [./planning/](./planning/) directory:
 
-1.  [./planning/1-research-discussion.md](./planning/1-research-discussion.md)
+1.  [1-research-discussion.md](./planning/1-research-discussion.md)
     Summary of some of the initial research and LLM discussion on the task
 
-2.  [./planning/2-my-architecture.md](./planning/2-my-architecture.md)
+2.  [2-my-architecture.md](./planning/2-my-architecture.md)
     Contains all my own thoughts and reasonings on a system architecture as well as a concrete beginnings on the C4 models Containers and Components
 
-3.  [./planning/3-architecture-diagrams.dsl](./planning/3-architecture-diagrams.dsl)
+3.  [3-architecture-diagrams.dsl](./planning/3-architecture-diagrams.dsl)
     This contains the C4 model system architecture in the structurizr DSL format. This was created by me based on the initial containers and components description and then refined in an iterative process with an LLM agent.
 
-4.  [./planning/4-data-import-schema.md](./planning/4-data-import-schema.md)
+4.  [4-data-import-schema.md](./planning/4-data-import-schema.md)
     Contains the data ingestion specifications, this file was iterated on with an LLM based on the structurizr DSL and used to produce the data ingestion script.
 
-5.  [./planning/./planning/5-architecture-code.md](./planning/5-architecture-code.md)
+5.  [5-architecture-code.md](./planning/5-architecture-code.md)
     Contains prototype code specifications and interfaces for all C4 Containers and their Components, mostly generated in one shot based on C4 specification and then used as a reference in both agentic and non-agentic development.
 
 There is also a more detailed development log and notes in [DEV.md](./DEV.md).
@@ -115,34 +115,6 @@ There is also a more detailed development log and notes in [DEV.md](./DEV.md).
 
 ### Conclusions
 
-Although this would still require some further work to become a production ready system, it covers all the core fundamentals of every component of the system, and I learnt a lot in the week I spent developing it.
+Although this still requires some further work to become a production ready system, it covers all the core fundamentals of every component of the system, and I learnt a lot in the week I spent developing it.
 
-###### Q&A
-
-Common issues I encountered while handling, indexing and searching large corpus of unstructured text?
-- identifying whats useful knowledge information from the source data and metadata therein
-- identifying and creating relationships between the discerned data information and metadata, and creating appropriate schemas
-- optimizing data ingestion methods and operations (batching, system resource management)
-- optimizing index building methods and operations
-- researching the fundamental text analysis and indexing methods and mathematical formula/algorithms required for semantic full text search (n-gram indexes, Jaccard similarity, Levenshtein automaton / distances, edit distances, BestMatch25) and deciding whether to implement them vs using an external FTS solution/library - decided on Lucene as it incorporated the most of these fundamental methods and provided clean and configurable API
-- considerations choosing and configuring different methods to index and search data for free text search: tokenization methods (text analyzers, which fields and how to store them), query parsing (input formats, filtering specifier formats, fuzzy matching distances and input term selection, weights on input terms) and querying methods
-- data presentation layer
-
-How would I scale to a much larger dataset (gigabytes/petabytes)?
-- due to index size and system resource constraints at those scales this would require sharding over multiple lucine indexes with synchronized sharding of the relational SQLite database
-- these are complicated systems to build, instead would probably use Elasticsearch and a postgresql/sqlite sharding solution
-- might be better to consider document store engines over relational which have better support for distributed systems
-- would require orchestration layer with request routing, load balancing, etc
-
-How would I scale to multiple users?
-- lucene-replicator for index replication across nodes
-- also replication of sqlite database
-- load balanced orchestartion via kubernetes
-- application code changes for thread safety / event bus synchronization
-
-What would I improve if given more time to complete the task?
-- spend more time in the planning and analysis stage and data analysis on the email format to prevent schema changes during development
-- investigate other forensic email analysis tools in relation to the prior point
-- test development
-- lucene indexing and querying configuration
-- end user client usability
+Further Q&A on the system architecture and development state can be found in [QA.md](./QA.md)
