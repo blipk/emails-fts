@@ -117,4 +117,4 @@ There is also a more detailed development log and notes in [DEV.md](./DEV.md).
 
 Although this still requires some further work to become a production ready system, it covers all the core fundamentals of every component of the system, and I learnt a lot in the week I spent developing it.
 
-Further Q&A on the system architecture and development state can be found in [QA.md](./QA.md)
+Further Q&A on the system architecture and development state can be found in [QA.md](./QA.md).
